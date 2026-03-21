@@ -155,7 +155,9 @@ namespace ACT_ChainTimers
                 spells.Columns["Enable"].DefaultValue = false;
                 spells.Columns.Add("Spell", typeof(string));
                 spells.Columns.Add("Mob", typeof(string));
+                spells.Columns["Mob"].DefaultValue = string.Empty;
                 spells.Columns.Add("Zone", typeof(string));
+                spells.Columns["Zone"].DefaultValue = string.Empty;
                 spells.Columns.Add("First At", typeof(int));
                 spells.Columns.Add("Recast 1", typeof(int));
                 spells.Columns.Add("Recast 2", typeof(int));
@@ -432,14 +434,18 @@ namespace ACT_ChainTimers
 
         private void CheckZoneFilter(object o)
         {
-            DataRow[] foundRows = spells.Select($"Zone='{currentZone}'");
-            if (foundRows.Length > 0)
+            try
             {
-                filteredZone = currentZone;
-                TextBox tb = filterPanel.Controls["textBoxZone"] as TextBox;
-                if (tb != null)
-                    tb.Text = filteredZone;
+                DataRow[] foundRows = spells.Select($"Zone='{EscapeFilterValue(currentZone)}'");
+                if (foundRows.Length > 0)
+                {
+                    filteredZone = currentZone;
+                    TextBox tb = filterPanel.Controls["textBoxZone"] as TextBox;
+                    if (tb != null)
+                        tb.Text = filteredZone;
+                }
             }
+            catch { }
         }
 
         #endregion Filters
@@ -571,7 +577,7 @@ namespace ACT_ChainTimers
                                     {
                                         // start timer 2
                                         timer.Stop();
-                                        Debug.WriteLine("combat start 2 early");
+                                        Debug.WriteLine("combat 1 start 2");
                                         row["Timer 2"] = row["Recast 2"];
                                         row["1 Active"] = false;
                                         row["2 Late"] = false;
@@ -582,7 +588,7 @@ namespace ACT_ChainTimers
                                     {
                                         // re-start timer 1
                                         timer.Stop();
-                                        Debug.WriteLine("combat restart 1 early");
+                                        Debug.WriteLine("combat 1 restart 1");
                                         row["Timer 1"] = row["Recast 1"];
                                         row["1 Active"] = true;
                                         row["1 Late"] = false;
@@ -598,7 +604,7 @@ namespace ACT_ChainTimers
                                     //we got hit a little after we expected it
                                     // restart timer 2
                                     timer.Stop();
-                                    Debug.WriteLine("combat restart 2");
+                                    Debug.WriteLine("combat 1 start 2 late");
                                     row["Timer 2"] = row["Recast 2"];
                                     row["1 Active"] = false;
                                     row["2 Late"] = false;
@@ -615,7 +621,7 @@ namespace ACT_ChainTimers
                                     //we got hit a little before we expected it
                                     // start timer 1
                                     timer.Stop();
-                                    Debug.WriteLine("combat start 1 early");
+                                    Debug.WriteLine("combat 2 starting 1");
                                     row["Timer 1"] = row["Recast 1"];
                                     row["1 Active"] = true;
                                     row["2 Active"] = false;
@@ -630,7 +636,7 @@ namespace ACT_ChainTimers
                                     //we got hit a little after we expected it
                                     // restart timer 1
                                     timer.Stop();
-                                    Debug.WriteLine("combat restart 1");
+                                    Debug.WriteLine("combat 2 start 1 late");
                                     row["Timer 1"] = row["Recast 1"];
                                     row["1 Active"] = true;
                                     row["2 Late"] = false;
@@ -852,7 +858,8 @@ namespace ACT_ChainTimers
                             if (remaining == warning && !(bool)row["1 Active"])
                             {
                                 Debug.WriteLine("Timer combat start alert");
-                                ActGlobals.oFormActMain.TTS(row["Alert"].ToString());
+                                if(!string.IsNullOrWhiteSpace(row["Alert"].ToString()))
+                                    ActGlobals.oFormActMain.TTS(row["Alert"].ToString());
                             }
                         }
                     }
@@ -862,13 +869,12 @@ namespace ACT_ChainTimers
                         int remains = (int)row["Timer 1"] - 1;
                         row["Timer 1"] = remains;
 
-                        if (remains == warning)
+                        if (remains == warning && !string.IsNullOrWhiteSpace(row["Alert"].ToString()))
                             ActGlobals.oFormActMain.TTS(row["Alert"].ToString());
 
                         if (remains <= 0)
                         {
-                            Debug.WriteLine("Timer stopping 1");
-                            row["1 Active"] = false;
+                            Debug.WriteLine("Timer expired 1");
                             if (fillMissed)
                             {
                                 if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
@@ -887,6 +893,27 @@ namespace ACT_ChainTimers
                                     row["Timer 1"] = row["Recast 1"];
                                 }
                             }
+                            else
+                            {
+                                if(remains <= -warning)
+                                {
+                                    Debug.WriteLine("Timer done waiting for 1, stopping it");
+                                    row["1 Active"] = false;
+                                }
+                                else
+                                {
+                                    if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
+                                    {
+                                        Debug.WriteLine("Timer waiting for 2, it's late");
+                                        row["2 Late"] = true;
+                                    }
+                                    else
+                                    {
+                                        Debug.WriteLine("Timer waiting for another 1, it's late");
+                                        row["1 Late"] = true;
+                                    }
+                                }
+                            }
                         }
                     }
                     else if ((bool)row["2 Active"])
@@ -894,13 +921,12 @@ namespace ACT_ChainTimers
                         int remains = (int)row["Timer 2"] - 1;
                         row["Timer 2"] = remains;
 
-                        if (remains == warning)
+                        if (remains == warning && !string.IsNullOrWhiteSpace(row["Alert"].ToString()))
                             ActGlobals.oFormActMain.TTS(row["Alert"].ToString());
 
                         if (remains <= 0)
                         {
                             Debug.WriteLine("Timer stopping 2");
-                            row["2 Active"] = false;
                             row["1 Late"] = true;
                             if (fillMissed)
                             {
@@ -908,6 +934,19 @@ namespace ACT_ChainTimers
                                 row["1 Active"] = true;
                                 row["2 Late"] = false;
                                 row["Timer 1"] = row["Recast 1"];
+                            }
+                            else
+                            {
+                                if (remains <= -warning)
+                                {
+                                    Debug.WriteLine("Timer done waiting for 2, stopping it");
+                                    row["2 Active"] = false;
+                                }
+                                else
+                                {
+                                    Debug.WriteLine("Timer waiting for 1, it's late");
+                                    row["1 Late"] = true;
+                                }
                             }
                         }
                     }
@@ -926,7 +965,7 @@ namespace ACT_ChainTimers
             {
                 dataGridView1.Columns[i].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
             }
-            // collect and set the calculated sizes (the screen has probably not been updated yet)
+            // collect and set the calculated sizes (the screen has possibly not been updated yet)
             for (int i = 0; i <= dataGridView1.Columns.Count - 1; i++)
             {
                 dataGridView1.Columns[i].Width = dataGridView1.Columns[i].Width;
@@ -1140,7 +1179,7 @@ namespace ACT_ChainTimers
 
         private void buttonTest_Click(object sender, EventArgs e)
         {
-            string p = "S=\"Confusion Pulse\" M=\"G'Oris Hunet the Blind\" Z=\"Zon Zobboz: Gaze of the Oglth [Raid]\" F=\"14\" R1=\"75\" 1=\"47\" 2=\"57\" L=\"T\" W=\"7\" A=\"confusion ink\" />";
+            string p = "S=\"Constant Glare\" M=\"Oogiloi Eye\" Z=\"Zon Zobboz: The Outer Swarmyard [Raid]\" F=\"164\" R1=\"77\" R2=\"37\" L=\"T\" W=\"7\" A=\"fear in 5\" />";
             var fieldPattern = @"(\w+)=""([^""]*)""";
             var fieldMatches = Regex.Matches(p, fieldPattern);
             var xmlFields = new Dictionary<string, string>();
