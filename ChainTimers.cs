@@ -1,5 +1,7 @@
 ﻿using Advanced_Combat_Tracker;
 using System;
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -62,6 +64,10 @@ namespace ACT_ChainTimers
         // UI thread support
         WindowsFormsSynchronizationContext mUiContext = new WindowsFormsSynchronizationContext();
         bool importChecked;
+
+        // state control
+        ConcurrentQueue<EventDescription> eventDescriptions = new ConcurrentQueue<EventDescription>();
+        private int _isProcessing = 0;
 
         // context menu
         int contextRow = -1;
@@ -464,195 +470,17 @@ namespace ACT_ChainTimers
                 mUiContext.Post(CheckZoneFilter, null);
             }
 
-            try
-            {
-                foreach (DataRow row in spells.Rows)
-                {
-                    if ((bool)row["Enable"] 
-                        && !string.IsNullOrWhiteSpace(row["Mob"].ToString())
-                        && !string.IsNullOrWhiteSpace(row["First At"].ToString()))
-                    {
-                        bool zoneOK = true;
-                        string spellZone = row["Zone"].ToString();
-                        if (!string.IsNullOrWhiteSpace(spellZone))
-                        {
-                            if (spellZone != currentZone)
-                                zoneOK = false;
-                        }
-                        if (zoneOK)
-                        {
-                            Debug.WriteLine("Combat Start");
-                            row["First Timer"] = -1; //combat start indicator to watch for the mob
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"OnCombatStart: {ex.ToString()}");
-            }
+            Enqueue(new EventDescription { CombatStart=true, CombatToggleArgs=encounterInfo });
         }
 
         private void OFormActMain_OnCombatEnd(bool isImport, CombatToggleEventArgs encounterInfo)
         {
-            if (!importChecked) //debug
-            {
-                Debug.WriteLine("Combat end stopping everything");
-                foreach (DataRow row in spells.Rows)
-                {
-                    row["Mob Hit"] = false;
-                    row["1 Active"] = false;
-                    row["2 Late"] = false;
-                    row["2 Active"] = false;
-                    row["1 Late"] = false;
-                    row["First Timer"] = 0;
-                    row["Timer 1"] = 0;
-                    row["Timer 2"] = 0;
-                    timer.Stop();
-                }
-            }
+            Enqueue(new EventDescription { CombatEnd=true, CombatToggleArgs=encounterInfo });
         }
 
         private void OFormActMain_AfterCombatAction(bool isImport, CombatActionEventArgs actionInfo)
         {
-            try
-            {
-                foreach (DataRow row in spells.Rows)
-                {
-                    if ((bool)row["Enable"])
-                    {
-                        string zone = row["Zone"].ToString();
-                        if (!string.IsNullOrWhiteSpace(zone) && zone != this.currentZone)
-                                continue;
-
-                        // check for combat started but we haven't seen the mob yet
-                        bool watching = !string.IsNullOrWhiteSpace(row["First Timer"].ToString());
-                        if (watching && (int)row["First Timer"] < 0 && !(bool)row["Mob Hit"])
-                        {
-                            if (actionInfo.victim.Equals(row["Mob"].ToString()))
-                            {
-                                row["Mob Hit"] = true;
-                                row["First Timer"] = row["First At"];
-                                timer.Start();
-                            }
-                        }
-
-                        // wait til we're fighting the specified mob
-                        if(!string.IsNullOrWhiteSpace(row["Mob"].ToString())
-                            && actionInfo.victim.Equals(row["Mob"].ToString())
-                            && !(bool)row["Mob Hit"])
-                        {
-                            row["Mob Hit"] = true;
-                        }
-                        if(!string.IsNullOrWhiteSpace(row["Mob"].ToString()) && !(bool)row["Mob Hit"])
-                            continue;
-
-
-                        // watch for the spell
-                        if (actionInfo.theAttackType.Equals(row["Spell"].ToString()))
-                        {
-                            int warning = (int)row["Warn At"];
-
-                            if (!(bool)row["1 Active"] && !(bool)row["2 Active"])
-                            {
-                                if(!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()))
-                                {
-                                    timer.Stop();
-                                    Debug.WriteLine("combat start from scratch");
-                                    row["Timer 1"] = row["Recast 1"];
-                                    row["1 Active"] = true;
-                                    row["2 Late"] = false;
-                                    row["1 Late"] = false;
-                                    row["First Timer"] = 0;
-                                    timer.Start();
-                                }
-                            }
-                            else if ((bool)row["1 Active"])
-                            {
-                                int remains = (int)row["Timer 1"];
-                                if (remains <= warning)
-                                {
-                                    //we got hit a little before we expected it
-                                    if(!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
-                                    {
-                                        // start timer 2
-                                        timer.Stop();
-                                        Debug.WriteLine("combat 1 start 2");
-                                        row["Timer 2"] = row["Recast 2"];
-                                        row["1 Active"] = false;
-                                        row["2 Late"] = false;
-                                        row["2 Active"] = true;
-                                        timer.Start();
-                                    }
-                                    else if (!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()))
-                                    {
-                                        // re-start timer 1
-                                        timer.Stop();
-                                        Debug.WriteLine("combat 1 restart 1");
-                                        row["Timer 1"] = row["Recast 1"];
-                                        row["1 Active"] = true;
-                                        row["1 Late"] = false;
-                                        timer.Start();
-                                    }
-                                }
-                            }
-                            else if ((bool)row["2 Late"])
-                            {
-                                int remains = (int)row["Timer 2"];
-                                if (remains + warning >= (int)row["Recast 2"])
-                                {
-                                    //we got hit a little after we expected it
-                                    // restart timer 2
-                                    timer.Stop();
-                                    Debug.WriteLine("combat 1 start 2 late");
-                                    row["Timer 2"] = row["Recast 2"];
-                                    row["1 Active"] = false;
-                                    row["2 Late"] = false;
-                                    row["2 Active"] = true;
-                                    row["1 Late"] = false;
-                                    timer.Start();
-                                }
-                            }
-                            else if ((bool)row["2 Active"])
-                            {
-                                int remains = (int)row["Timer 2"];
-                                if (remains <= warning)
-                                {
-                                    //we got hit a little before we expected it
-                                    // start timer 1
-                                    timer.Stop();
-                                    Debug.WriteLine("combat 2 starting 1");
-                                    row["Timer 1"] = row["Recast 1"];
-                                    row["1 Active"] = true;
-                                    row["2 Active"] = false;
-                                    timer.Start();
-                                }
-                            }
-                            else if ((bool)row["1 Late"])
-                            {
-                                int remains = (int)row["Timer 1"];
-                                if (remains + warning >= (int)row["Recast 1"])
-                                {
-                                    //we got hit a little after we expected it
-                                    // restart timer 1
-                                    timer.Stop();
-                                    Debug.WriteLine("combat 2 start 1 late");
-                                    row["Timer 1"] = row["Recast 1"];
-                                    row["1 Active"] = true;
-                                    row["2 Late"] = false;
-                                    row["2 Active"] = false;
-                                    row["1 Late"] = false;
-                                    timer.Start();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.WriteLine($"AfterCombatAction: {e.ToString()}");
-            }
+            Enqueue(new EventDescription { CombatAction = true, combatActionArgs = actionInfo });
         }
 
         void oFormActMain_UpdateCheckClicked()
@@ -829,37 +657,294 @@ namespace ACT_ChainTimers
 
         #endregion ACT hooks
 
-        #region Datagrid
+        #region Progress Processing
 
-        private void Timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
+        private void Enqueue(EventDescription item)
+        {
+            eventDescriptions.Enqueue(item);
+            StartProcessing();
+        }
+
+        private void StartProcessing()
+        {
+            // Ensure only one UI processing loop is scheduled
+            if (Interlocked.CompareExchange(ref _isProcessing, 1, 0) != 0)
+                return;
+
+            mUiContext.Post(_ => ProcessQueue(), null);
+        }
+
+        private void ProcessQueue()
+        {
+            // runs on UI thread
+            try
+            {
+                while (eventDescriptions.TryDequeue(out EventDescription item))
+                {
+                    if (item.CombatAction)
+                        ProcessCombatAction(item.combatActionArgs);
+                    else if (item.CombatStart)
+                        ProcessCombatStart(item.CombatToggleArgs);
+                    else if (item.CombatEnd)
+                        ProcessCombatEnd(item.CombatToggleArgs);
+                    else if (item.TimerTick)
+                        ProcessTimerTick();
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isProcessing, 0);
+
+                // If new items arrived while we were finishing, restart
+                if (!eventDescriptions.IsEmpty)
+                    StartProcessing();
+            }
+        }
+
+
+        private void ProcessCombatStart(CombatToggleEventArgs args)
         {
             try
             {
                 foreach (DataRow row in spells.Rows)
                 {
-                    bool fillMissed = (bool)row["Fill Miss"];
-                    int warning = (int)row["Warn At"];
+                    if ((bool)row["Enable"]
+                        && !string.IsNullOrWhiteSpace(row["Mob"].ToString())
+                        && !string.IsNullOrWhiteSpace(row["First At"].ToString()))
+                    {
+                        bool zoneOK = true;
+                        string spellZone = row["Zone"].ToString();
+                        if (!string.IsNullOrWhiteSpace(spellZone))
+                        {
+                            if (spellZone != currentZone)
+                                zoneOK = false;
+                        }
+                        if (zoneOK)
+                        {
+                            Debug.WriteLine("Combat Start");
+                            row["First Timer"] = -1; //combat start indicator to watch for the mob
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"OnCombatStart: {ex.ToString()}");
+            }
+        }
+
+        private void ProcessCombatEnd(CombatToggleEventArgs args)
+        {
+            if (!importChecked) //debug, to let timers run after combat stops
+            {
+                Debug.WriteLine("Combat end stopping everything");
+                foreach (DataRow row in spells.Rows)
+                {
+                    row["Mob Hit"] = false;
+                    row["1 Active"] = false;
+                    row["2 Late"] = false;
+                    row["2 Active"] = false;
+                    row["1 Late"] = false;
+                    row["First Timer"] = 0;
+                    row["Timer 1"] = 0;
+                    row["Timer 2"] = 0;
+                    timer.Stop();
+                }
+            }
+        }
+
+        private void ProcessCombatAction(CombatActionEventArgs actionInfo)
+        {
+            try
+            {
+                foreach (DataRow row in spells.Rows)
+                {
+                    if ((bool)row["Enable"])
+                    {
+                        string zone = row["Zone"].ToString();
+                        if (!string.IsNullOrWhiteSpace(zone) && zone != this.currentZone)
+                            continue;
+
+                        // check for combat started but we haven't seen the mob yet
+                        bool watching = !string.IsNullOrWhiteSpace(row["First Timer"].ToString());
+                        if (watching && (int)row["First Timer"] < 0 && !(bool)row["Mob Hit"])
+                        {
+                            if (actionInfo.victim.Equals(row["Mob"].ToString()))
+                            {
+                                row["Mob Hit"] = true;
+                                row["First Timer"] = row["First At"];
+                                timer.Start();
+                            }
+                        }
+
+                        // wait til we're fighting the specified mob
+                        if (!string.IsNullOrWhiteSpace(row["Mob"].ToString())
+                            && actionInfo.victim.Equals(row["Mob"].ToString())
+                            && !(bool)row["Mob Hit"])
+                        {
+                            row["Mob Hit"] = true;
+                        }
+                        if (!string.IsNullOrWhiteSpace(row["Mob"].ToString()) && !(bool)row["Mob Hit"])
+                            continue;
+
+
+                        // watch for the spell
+                        if (actionInfo.theAttackType.Equals(row["Spell"].ToString()))
+                        {
+                            int warning = (int)row["Warn At"];
+
+                            if (!(bool)row["1 Active"] && !(bool)row["2 Active"])
+                            {
+                                if (!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()))
+                                {
+                                    timer.Stop();
+                                    Debug.WriteLine("combat start from scratch");
+                                    row["Timer 1"] = row["Recast 1"];
+                                    row["1 Active"] = true;
+                                    row["2 Late"] = false;
+                                    row["1 Late"] = false;
+                                    row["First Timer"] = 0;
+                                    timer.Start();
+                                }
+                            }
+                            else if ((bool)row["1 Active"])
+                            {
+                                int remains = (int)row["Timer 1"];
+                                if ((bool)row["1 Late"])
+                                {
+                                    // it was started by the timer
+                                    // restart it based on the hit
+                                    Debug.WriteLine("combat re-init timer 1 from hit");
+                                    row["Timer 1"] = row["Recast 1"];
+                                    row["1 Late"] = false;
+                                    remains = (int)row["Timer 1"];
+                                }
+                                if (remains <= warning)
+                                {
+                                    //we got hit a little before we expected it
+                                    if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
+                                    {
+                                        // start timer 2
+                                        timer.Stop();
+                                        Debug.WriteLine("combat 1 start 2");
+                                        row["Timer 1"] = 0;
+                                        row["Timer 2"] = row["Recast 2"];
+                                        row["1 Active"] = false;
+                                        row["2 Late"] = false;
+                                        row["2 Active"] = true;
+                                        timer.Start();
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()))
+                                    {
+                                        // re-start timer 1
+                                        timer.Stop();
+                                        Debug.WriteLine("combat 1 restart 1");
+                                        row["Timer 1"] = row["Recast 1"];
+                                        row["1 Active"] = true;
+                                        row["1 Late"] = false;
+                                        timer.Start();
+                                    }
+                                }
+
+                            } // end 1 Active
+
+                            else if ((bool)row["2 Active"])
+                            {
+                                int remains = (int)row["Timer 2"];
+                                if ((bool)row["2 Late"])
+                                {
+                                    // the timer says we are late for the 2nd recast
+                                    // so it started the 2nd timer
+                                    // but now we got hit
+                                    // so re-init the timer
+                                    Debug.WriteLine("combat: re-init timer 2 from hit");
+                                    row["Timer 2"] = row["Recast 2"];
+                                    row["2 Late"] = false;
+                                    remains = (int)row["Timer 2"];
+                                }
+                                if (remains <= warning)
+                                {
+                                    //we got hit a little before we expected it
+                                    // start timer 1
+                                    timer.Stop();
+                                    Debug.WriteLine("combat 2 starting 1");
+                                    row["Timer 1"] = row["Recast 1"];
+                                    row["1 Active"] = true;
+                                    row["2 Active"] = false;
+                                    row["Timer 2"] = 0;
+                                    timer.Start();
+                                }
+                            }
+                            else if ((bool)row["1 Late"])
+                            {
+                                int remains = (int)row["Timer 1"];
+                                if (remains + warning >= (int)row["Recast 1"])
+                                {
+                                    //we got hit a little after we expected it
+                                    // restart timer 1
+                                    timer.Stop();
+                                    Debug.WriteLine("combat 2 start 1 late");
+                                    row["Timer 1"] = row["Recast 1"];
+                                    row["1 Active"] = true;
+                                    row["2 Late"] = false;
+                                    row["2 Active"] = false;
+                                    row["1 Late"] = false;
+                                    timer.Start();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine($"AfterCombatAction: {e.ToString()}");
+            }
+        }
+
+        private void Timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
+        {
+            Enqueue(new EventDescription { TimerTick = true });
+        }
+
+        private void ProcessTimerTick()
+        {
+            try
+            {
+                foreach (DataRow row in spells.Rows)
+                {
+                    if (!(bool)row["Enable"])
+                        continue;
 
                     string zone = row["Zone"].ToString();
                     if (!string.IsNullOrWhiteSpace(zone))
-                    {
                         if (zone != this.currentZone) continue;
-                    }
+
+                    bool fillMissed = (bool)row["Fill Miss"];
+                    int warning = (int)row["Warn At"];
 
                     // watch for very first alert
                     // triggered by start of the fight rather than spell hit
                     if ((bool)row["Mob Hit"])
                     {
                         int remaining = (int)row["First Timer"];
-                        remaining--;
-                        if (remaining >= 0)
+                        if (remaining > 0)
                         {
+                            remaining--;
                             row["First Timer"] = remaining;
                             if (remaining == warning && !(bool)row["1 Active"])
                             {
-                                Debug.WriteLine("Timer combat start alert");
-                                if(!string.IsNullOrWhiteSpace(row["Alert"].ToString()))
+                                Debug.WriteLine("Timer: combat start alert");
+                                if (!string.IsNullOrWhiteSpace(row["Alert"].ToString()))
                                     ActGlobals.oFormActMain.TTS(row["Alert"].ToString());
+                            }
+                            if (remaining == 0 && !(bool)row["1 Active"] && fillMissed)
+                            {
+                                // didn't see the first hit but want to assume it happened
+                                Debug.WriteLine("Timer: first fill-missing, starting recast 1");
+                                row["1 Active"] = true;
+                                row["1 Late"] = true;
+                                row["Timer 1"] = (int)row["Recast 1"] + 1; //+1 since about to subtract one, in "1 Active" processing
                             }
                         }
                     }
@@ -874,20 +959,21 @@ namespace ACT_ChainTimers
 
                         if (remains <= 0)
                         {
-                            Debug.WriteLine("Timer expired 1");
+                            Debug.WriteLine("Timer: expired 1");
                             if (fillMissed)
                             {
                                 if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
                                 {
-                                    Debug.WriteLine("Timer starting 2");
+                                    Debug.WriteLine("Timer: starting 2");
                                     row["2 Late"] = true;
                                     row["2 Active"] = true;
                                     row["1 Late"] = false;
+                                    row["1 Active"] = false;
                                     row["Timer 2"] = row["Recast 2"];
                                 }
                                 else
                                 {
-                                    Debug.WriteLine("Timer re-starting 1");
+                                    Debug.WriteLine("Timer: re-starting 1");
                                     row["1 Active"] = true;
                                     row["1 Late"] = true;
                                     row["Timer 1"] = row["Recast 1"];
@@ -895,21 +981,22 @@ namespace ACT_ChainTimers
                             }
                             else
                             {
-                                if(remains <= -warning)
+                                if (remains <= (-1 * warning))
                                 {
-                                    Debug.WriteLine("Timer done waiting for 1, stopping it");
+                                    Debug.WriteLine("Timer: done waiting for 1, going inactive");
+                                    row["Timer 1"] = 0;
                                     row["1 Active"] = false;
                                 }
                                 else
                                 {
                                     if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
                                     {
-                                        Debug.WriteLine("Timer waiting for 2, it's late");
+                                        Debug.WriteLine("Timer: missing 2, it's late");
                                         row["2 Late"] = true;
                                     }
                                     else
                                     {
-                                        Debug.WriteLine("Timer waiting for another 1, it's late");
+                                        Debug.WriteLine("Timer: missing another 1, it's late");
                                         row["1 Late"] = true;
                                     }
                                 }
@@ -926,11 +1013,11 @@ namespace ACT_ChainTimers
 
                         if (remains <= 0)
                         {
-                            Debug.WriteLine("Timer stopping 2");
+                            Debug.WriteLine("Timer: expired 2");
                             row["1 Late"] = true;
                             if (fillMissed)
                             {
-                                Debug.WriteLine("Timer starting 1");
+                                Debug.WriteLine("Timer: starting 1");
                                 row["1 Active"] = true;
                                 row["2 Late"] = false;
                                 row["Timer 1"] = row["Recast 1"];
@@ -939,12 +1026,13 @@ namespace ACT_ChainTimers
                             {
                                 if (remains <= -warning)
                                 {
-                                    Debug.WriteLine("Timer done waiting for 2, stopping it");
+                                    Debug.WriteLine("Timer: done waiting for 2, going inactive");
+                                    row["Timer 2"] = 0;
                                     row["2 Active"] = false;
                                 }
                                 else
                                 {
-                                    Debug.WriteLine("Timer waiting for 1, it's late");
+                                    Debug.WriteLine("Timer: missing 1, it's late");
                                     row["1 Late"] = true;
                                 }
                             }
@@ -952,11 +1040,15 @@ namespace ACT_ChainTimers
                     }
                 }
             }
-            catch
+            catch (Exception tte)
             {
-                Debug.WriteLine($"Timer: {e.ToString()}");
+                Debug.WriteLine($"Timer: {tte}");
             }
         }
+
+        #endregion Progress Processing
+
+        #region Datagrid
 
         private void AutoSizeGridColumns()
         {
@@ -1103,6 +1195,10 @@ namespace ACT_ChainTimers
                                         Brushes.Black, e.CellBounds.X + 2,
                                         e.CellBounds.Y + 2, StringFormat.GenericDefault);
                                 }
+                                else if (value < 0)
+                                    e.Graphics.DrawString(e.Value.ToString(), e.CellStyle.Font,
+                                        Brushes.Red, e.CellBounds.X + 2,
+                                        e.CellBounds.Y + 2, StringFormat.GenericDefault);
                             }
                             e.Handled = true;
                         }
@@ -1179,24 +1275,44 @@ namespace ACT_ChainTimers
 
         private void buttonTest_Click(object sender, EventArgs e)
         {
-            string p = "S=\"Constant Glare\" M=\"Oogiloi Eye\" Z=\"Zon Zobboz: The Outer Swarmyard [Raid]\" F=\"164\" R1=\"77\" R2=\"37\" L=\"T\" W=\"7\" A=\"fear in 5\" />";
-            var fieldPattern = @"(\w+)=""([^""]*)""";
-            var fieldMatches = Regex.Matches(p, fieldPattern);
-            var xmlFields = new Dictionary<string, string>();
-            foreach (Match match in fieldMatches)
-            {
-                string fieldName = match.Groups[1].Value;
-                string fieldValue = match.Groups[2].Value;
-                xmlFields[fieldName] = fieldValue;
-            }
+            //string p = "S=\"Constant Glare\" M=\"Oogiloi Eye\" Z=\"Zon Zobboz: The Outer Swarmyard [Raid]\" F=\"164\" R1=\"77\" R2=\"37\" L=\"T\" W=\"7\" A=\"fear in 5\" />";
+            //var fieldPattern = @"(\w+)=""([^""]*)""";
+            //var fieldMatches = Regex.Matches(p, fieldPattern);
+            //var xmlFields = new Dictionary<string, string>();
+            //foreach (Match match in fieldMatches)
+            //{
+            //    string fieldName = match.Groups[1].Value;
+            //    string fieldValue = match.Groups[2].Value;
+            //    xmlFields[fieldName] = fieldValue;
+            //}
+            //XmlSnippetEventArgs xe = new XmlSnippetEventArgs("Chain", xmlFields, p);
+            //UiParseXml(xe);
 
-            XmlSnippetEventArgs xe = new XmlSnippetEventArgs("Chain", xmlFields, p);
-            UiParseXml(xe);
         }
 
         private void buttonHelp_Click(object sender, EventArgs e)
         {
             Process.Start("https://github.com/jeffjl74/ACT_RoR_Parcels#Locked-Parcel-Plugin-for-Advanced-Combat-Tracker");
+        }
+
+        private void checkBoxFit_CheckedChanged(object sender, EventArgs e)
+        {
+            if (checkBoxFit.Checked)
+            {
+                int wide = panelData.ClientRectangle.Width / (dataGridView1.Columns.Count + 1);
+                if (wide < 50)
+                    wide = 50;
+                for (int i = 0; i <= dataGridView1.Columns.Count - 1; i++)
+                {
+                    dataGridView1.Columns[i].Width = dataGridView1.Columns[i].Width = wide;
+                }
+                checkBoxFit.Text = "Fit columns to contents";
+            }
+            else
+            {
+                AutoSizeGridColumns();
+                checkBoxFit.Text = "Fit columns to window";
+            }
         }
 
         #endregion Buttons

@@ -48,6 +48,7 @@ namespace ACT_ChainTimers
             this.copyZoneFromMainTabToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.contextMenuStripSpell = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.copySpellFromMainTabToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.checkBoxFit = new System.Windows.Forms.CheckBox();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).BeginInit();
             this.panelData.SuspendLayout();
             this.panelControls.SuspendLayout();
@@ -83,6 +84,7 @@ namespace ACT_ChainTimers
             // 
             // panelControls
             // 
+            this.panelControls.Controls.Add(this.checkBoxFit);
             this.panelControls.Controls.Add(this.buttonHelp);
             this.panelControls.Controls.Add(this.buttonTest);
             this.panelControls.Controls.Add(this.buttonShare);
@@ -202,6 +204,17 @@ namespace ACT_ChainTimers
             this.copySpellFromMainTabToolStripMenuItem.Text = "Copy Spell from Main tab";
             this.copySpellFromMainTabToolStripMenuItem.Click += new System.EventHandler(this.copySpellFromMainTabToolStripMenuItem_Click);
             // 
+            // checkBoxFit
+            // 
+            this.checkBoxFit.AutoSize = true;
+            this.checkBoxFit.Location = new System.Drawing.Point(126, 9);
+            this.checkBoxFit.Name = "checkBoxFit";
+            this.checkBoxFit.Size = new System.Drawing.Size(131, 17);
+            this.checkBoxFit.TabIndex = 8;
+            this.checkBoxFit.Text = "Fit Columns to window";
+            this.checkBoxFit.UseVisualStyleBackColor = true;
+            this.checkBoxFit.CheckedChanged += new System.EventHandler(this.checkBoxFit_CheckedChanged);
+            // 
             // ChainTimers
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
@@ -242,5 +255,6 @@ namespace ACT_ChainTimers
         private ToolStripMenuItem copyCurrentZoneToolStripMenuItem;
         private ToolStripMenuItem copyZoneFromMainTabToolStripMenuItem;
         private ToolStripMenuItem copySpellFromMainTabToolStripMenuItem;
+        private CheckBox checkBoxFit;
     }
 }

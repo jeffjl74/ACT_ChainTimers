@@ -86,6 +86,7 @@
     <Compile Include="ChainTimers.Designer.cs">
       <DependentUpon>ChainTimers.cs</DependentUpon>
     </Compile>
+    <Compile Include="EventDescription.cs" />
     <Compile Include="SimpleMessageBox.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -97,7 +98,9 @@
     <Compile Include="TextBoxX.cs">
       <SubType>Component</SubType>
     </Compile>
-    <Compile Include="TextBoxX.Designer.cs" />
+    <Compile Include="TextBoxX.Designer.cs">
+      <DependentUpon>TextBoxX.cs</DependentUpon>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="ChainTimers.resx">
