@@ -93,8 +93,6 @@
     <Compile Include="SimpleMessageBox.Designer.cs">
       <DependentUpon>SimpleMessageBox.cs</DependentUpon>
     </Compile>
-    <Compile Include="Spell.cs" />
-    <Compile Include="SpellList.cs" />
     <Compile Include="TextBoxX.cs">
       <SubType>Component</SubType>
     </Compile>
@@ -117,5 +115,6 @@
   <ItemGroup>
     <None Include="Properties\DataSources\LooterList.datasource" />
     <None Include="Properties\DataSources\SpellList.datasource" />
+    <None Include="README.md" />
   </ItemGroup>
 </Project>
