@@ -1,11 +1,8 @@
 ﻿using Advanced_Combat_Tracker;
 using System;
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Data;
-using System.Data.SqlTypes;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -14,16 +11,14 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Security.Policy;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Xml.Serialization;
 
 [assembly: AssemblyTitle("Chain Timers Plugin")]
-[assembly: AssemblyDescription("Tracks a spell with 2 different recast times")]
+[assembly: AssemblyDescription("Spell timers with up to 2 different recast times")]
 [assembly: AssemblyCompany("Mineeme")]
 [assembly: AssemblyVersion("1.0.0.0")]
 
@@ -31,6 +26,9 @@ namespace ACT_ChainTimers
 {
     public partial class ChainTimers : UserControl, IActPluginV1
 	{
+        bool debugEnabled = true; // true for Debug.WriteLineIf printouts & test buttons
+
+        const string helpUlr = "https://github.com/jeffjl74/ACT_ChainTimers#chained-timers-plugin";
 
         Label lblStatus;        // The status label that appears in ACT's Plugin tab
         TabPage myTab;          // the plugin's tab
@@ -43,31 +41,32 @@ namespace ACT_ChainTimers
 
         System.Timers.Timer timer = new System.Timers.Timer();
 
+        List<string> optionalColumns = new List<string>();  // normally hidden state-of-progress columns
+
+        // progress bar column definitions
+        Dictionary<int, string> progressBars = new Dictionary<int, string>();
+
         // filter panel support
-        List<string> progressColumns = new List<string>();
-        List<string> progressMaxColumns = new List<string>();
         Dictionary<int, Control> filterBoxes = new Dictionary<int, Control>();
-        bool filtering = false;
+        bool filtering = false; // reduce unnecessary realignments of the filter boxes when true
         int firstVisibleFilter;
         int lastVisibleFilter;
-        int viewOnlyCols = 2;
+        int viewOnlyCols = 2;   // the [Reset] and [Realign] buttons aren't in the DataTable
         // add the 'filter' ghost text to the filter boxes
-        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern Int32 SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
         private const int EM_SETCUEBANNER = 0x1501;
 
-        // game zone
+        // game zone, account for possible color decoration
         Regex reCleanActZone = new Regex(@"(?::.+?:)?(?<decoration>\\#[0-9A-F]{6})?(?<zone>.+?)(?: \d+)?$", RegexOptions.Compiled);
         string currentZone = string.Empty;
-        string filteredZone = string.Empty;
 
         // UI thread support
         WindowsFormsSynchronizationContext mUiContext = new WindowsFormsSynchronizationContext();
-        bool importChecked;
-
-        // state control
-        ConcurrentQueue<EventDescription> eventDescriptions = new ConcurrentQueue<EventDescription>();
         private int _isProcessing = 0;
+        bool importChecked; // make state accessible from non-UI thread
+        // state change events
+        ConcurrentQueue<EventDescription> eventDescriptions = new ConcurrentQueue<EventDescription>();
 
         // context menu
         int contextRow = -1;
@@ -77,65 +76,6 @@ namespace ACT_ChainTimers
 		{
 			InitializeComponent();
 		}
-
-
-		#region IActPluginV1 Members
-		
-		public void InitPlugin(TabPage pluginScreenSpace, Label pluginStatusText)
-		{
-			lblStatus = pluginStatusText;	        // save the status label's reference to our local var
-            myTab = pluginScreenSpace;
-			pluginScreenSpace.Controls.Add(this);	// Add this UserControl to the tab ACT provides
-			this.Dock = DockStyle.Fill;             // Expand the UserControl to fill the tab's client space
-            myTab.VisibleChanged += Tab_VisibleChanged;
-
-            LoadSettings();
-
-            timer.Interval = 1000;
-            timer.SynchronizingObject = this;
-            timer.Elapsed += Timer_Elapsed;
-            timer.AutoReset = true;
-
-            // Create some sort of parsing event handler.  After the "+=" hit TAB twice and the code will be generated for you.
-            ActGlobals.oFormActMain.XmlSnippetAdded += OFormActMain_XmlSnippetAdded;
-            ActGlobals.oFormActMain.AfterCombatAction += OFormActMain_AfterCombatAction;
-            ActGlobals.oFormActMain.OnCombatStart += OFormActMain_OnCombatStart;
-            ActGlobals.oFormActMain.OnCombatEnd += OFormActMain_OnCombatEnd;
-
-            if (ActGlobals.oFormActMain.GetAutomaticUpdatesAllowed())
-            {
-                // If ACT is set to automatically check for updates, check for updates to the plugin
-                // If we don't put this on a separate thread, web latency will delay the plugin init phase
-                //new Thread(new ThreadStart(oFormActMain_UpdateCheckClicked)).Start();
-            }
-
-            lblStatus.Text = "Plugin Started";
-		}
-
-        public void DeInitPlugin()
-		{
-			// Unsubscribe from any events you listen to when exiting!
-			//ActGlobals.oFormActMain.OnLogLineRead -= OFormActMain_OnLogLineRead;
-            ActGlobals.oFormActMain.XmlSnippetAdded -= OFormActMain_XmlSnippetAdded;
-            ActGlobals.oFormActMain.AfterCombatAction -= OFormActMain_AfterCombatAction;
-            ActGlobals.oFormActMain.OnCombatStart -= OFormActMain_OnCombatStart;
-            ActGlobals.oFormActMain.OnCombatEnd -= OFormActMain_OnCombatEnd;
-            myTab.VisibleChanged -= Tab_VisibleChanged;
-
-            SaveSettings();
-			lblStatus.Text = "Plugin Exited";
-		}
-
-        #endregion
-
-        private void Tab_VisibleChanged(object sender, EventArgs e)
-        {
-            if (firstShow)
-            {
-                AutoSizeGridColumns();
-                firstShow = false;
-            }
-        }
 
         void LoadSettings()
         {
@@ -160,6 +100,7 @@ namespace ACT_ChainTimers
                 spells.Columns.Add("Enable", typeof(bool));
                 spells.Columns["Enable"].DefaultValue = false;
                 spells.Columns.Add("Spell", typeof(string));
+                spells.Columns["Spell"].DefaultValue = string.Empty;
                 spells.Columns.Add("Mob", typeof(string));
                 spells.Columns["Mob"].DefaultValue = string.Empty;
                 spells.Columns.Add("Zone", typeof(string));
@@ -170,7 +111,7 @@ namespace ACT_ChainTimers
                 spells.Columns.Add("Fill Miss", typeof(bool));
                 spells.Columns["Fill Miss"].DefaultValue = true;
                 spells.Columns.Add("Warn At", typeof(int));
-                spells.Columns["Warn At"].DefaultValue = 7;
+                spells.Columns["Warn At"].DefaultValue = 6;
                 spells.Columns.Add("Alert", typeof(string));
                 spells.Columns["Alert"].DefaultValue = "joust in 5";
 
@@ -178,6 +119,10 @@ namespace ACT_ChainTimers
                 spells.Columns.Add("Mob Hit", typeof(bool));
                 spells.Columns["Mob Hit"].DefaultValue = false;
                 spells.Columns.Add("First Timer", typeof(int));
+                spells.Columns.Add("First Active", typeof(bool));
+                spells.Columns["First Active"].DefaultValue = false;
+                spells.Columns.Add("First Late", typeof(bool));
+                spells.Columns["First Late"].DefaultValue = false;
                 spells.Columns.Add("1 Active", typeof(bool));
                 spells.Columns["1 Active"].DefaultValue = false;
                 spells.Columns.Add("Timer 1", typeof(int));
@@ -196,6 +141,9 @@ namespace ACT_ChainTimers
                 keys[2] = spells.Columns["Zone"];
                 spells.PrimaryKey = keys;
             }
+            spells.Columns["Mob"].AllowDBNull = true;
+            spells.Columns["Zone"].AllowDBNull = true;
+
             bindingSource.DataSource = spells;
             dataGridView1.DataSource = bindingSource;
 
@@ -217,6 +165,21 @@ namespace ACT_ChainTimers
             btn2.ToolTipText = "Stop and wait for a new Timer 1 start";
             dataGridView1.Columns.Insert(1, btn2);
 
+            // define hide-able columns
+            optionalColumns.Add("Mob Hit");
+            optionalColumns.Add("First Active");
+            optionalColumns.Add("First Late");
+            optionalColumns.Add("1 Active");
+            optionalColumns.Add("1 Late");
+            optionalColumns.Add("2 Active");
+            optionalColumns.Add("2 Late");
+
+            // and hide them
+            foreach (string col in optionalColumns)
+            {
+                dataGridView1.Columns[col].Visible = false;
+            }
+
             // tooltips
             dataGridView1.Columns["Spell"].ToolTipText = "Exact name of the spell";
             dataGridView1.Columns["Mob"].ToolTipText = "(Optioinal) Restricts the timers to that mob";
@@ -232,13 +195,10 @@ namespace ACT_ChainTimers
 
             AutoSizeGridColumns();
 
-            // define progress columns for _CellPainting
-            progressColumns.Add("First Timer");
-            progressColumns.Add("Timer 1");
-            progressColumns.Add("Timer 2");
-            progressMaxColumns.Add("First At");
-            progressMaxColumns.Add("Recast 1");
-            progressMaxColumns.Add("Recast 2");
+            // define progress bar columns for _CellPainting
+            progressBars.Add(dataGridView1.Columns["First Timer"].Index, "First At");
+            progressBars.Add(dataGridView1.Columns["Timer 1"].Index, "Recast 1");
+            progressBars.Add(dataGridView1.Columns["Timer 2"].Index, "Recast 2");
 
             // filter panel
             filterPanel.Height = dataGridView1.ColumnHeadersHeight + 10;
@@ -247,7 +207,7 @@ namespace ACT_ChainTimers
             lastVisibleFilter = spells.Columns.IndexOf("Alert") + viewOnlyCols;
             foreach (DataGridViewColumn col in dataGridView1.Columns)
             {
-                if(col.Index < firstVisibleFilter || col.Index > lastVisibleFilter)
+                if (col.Index < firstVisibleFilter || col.Index > lastVisibleFilter)
                     continue;
 
                 if (col.ValueType == typeof(string) || col.ValueType == typeof(int))
@@ -286,190 +246,78 @@ namespace ACT_ChainTimers
             foreach (DataRow row in spells.Rows)
             {
                 row["Mob Hit"] = false;
+                row["First Timer"] = 0;
+                row["First Active"] = false;
+                row["First Late"] = false;
                 row["1 Active"] = false;
+                row["Timer 1"] = 0;
                 row["2 Late"] = false;
                 row["2 Active"] = false;
-                row["1 Late"] = false;
-                row["First Timer"] = 0;
-                row["Timer 1"] = 0;
                 row["Timer 2"] = 0;
+                row["1 Late"] = false;
             }
             spells.WriteXml(settingsFile, XmlWriteMode.WriteSchema);
         }
 
-        #region Filters
 
-        private void Tb_ClickX(object sender, EventArgs e)
-        {
-            TextBoxX tb = sender as TextBoxX;
-            if (tb != null)
-                tb.Text = string.Empty;
-        }
+        #region IActPluginV1 Members
 
-        private void Cb_CheckedChanged(object sender, EventArgs e)
-        {
-            ApplyFilters();
-        }
+        public void InitPlugin(TabPage pluginScreenSpace, Label pluginStatusText)
+		{
+			lblStatus = pluginStatusText;	        // save the status label's reference to our local var
+            myTab = pluginScreenSpace;
+			pluginScreenSpace.Controls.Add(this);	// Add this UserControl to the tab ACT provides
+			this.Dock = DockStyle.Fill;             // Expand the UserControl to fill the tab's client space
+            myTab.VisibleChanged += Tab_VisibleChanged;
 
-        private void Tb_TextChanged(object sender, EventArgs e)
-        {
-            ApplyFilters();
-        }
+            // debugging
+            checkBoxImport.Visible = debugEnabled;
+            buttonTest.Visible = debugEnabled;
 
-        void SetFilterPlaceholder(TextBox tb)
-        {
-            SendMessage(tb.Handle, EM_SETCUEBANNER, IntPtr.Zero, "Filter");
-        }
+            LoadSettings();
 
-        void AlignFilterBoxes()
-        {
-            if (filtering)
+            timer.Interval = 1000;
+            timer.SynchronizingObject = this;
+            timer.Elapsed += Timer_Elapsed;
+            timer.AutoReset = true;
+            timer.Start();
+
+            // Create some sort of parsing event handler.  After the "+=" hit TAB twice and the code will be generated for you.
+            ActGlobals.oFormActMain.XmlSnippetAdded += OFormActMain_XmlSnippetAdded;
+            ActGlobals.oFormActMain.AfterCombatAction += OFormActMain_AfterCombatAction;
+            ActGlobals.oFormActMain.OnCombatStart += OFormActMain_OnCombatStart;
+            ActGlobals.oFormActMain.OnCombatEnd += OFormActMain_OnCombatEnd;
+
+            if (ActGlobals.oFormActMain.GetAutomaticUpdatesAllowed())
             {
-                return; // let the view settle before we re-size
+                // If ACT is set to automatically check for updates, check for updates to the plugin
+                // If we don't put this on a separate thread, web latency will delay the plugin init phase
+                //new Thread(new ThreadStart(oFormActMain_UpdateCheckClicked)).Start();
             }
 
-            foreach (DataGridViewColumn col in dataGridView1.Columns)
-            {
-                if (!filterBoxes.ContainsKey(col.Index)) continue;
+            lblStatus.Text = "Plugin Started";
+		}
 
-                if (col.Index < firstVisibleFilter || col.Index > lastVisibleFilter)
-                    continue;
+        public void DeInitPlugin()
+		{
+			// Unsubscribe from any events you listen to when exiting!
+			//ActGlobals.oFormActMain.OnLogLineRead -= OFormActMain_OnLogLineRead;
+            ActGlobals.oFormActMain.XmlSnippetAdded -= OFormActMain_XmlSnippetAdded;
+            ActGlobals.oFormActMain.AfterCombatAction -= OFormActMain_AfterCombatAction;
+            ActGlobals.oFormActMain.OnCombatStart -= OFormActMain_OnCombatStart;
+            ActGlobals.oFormActMain.OnCombatEnd -= OFormActMain_OnCombatEnd;
+            myTab.VisibleChanged -= Tab_VisibleChanged;
 
-                Rectangle rect = dataGridView1.GetCellDisplayRectangle(col.Index, -1, true);
-                if(rect.Width == 0) continue; // hasn't been displayed / calculated yet
+            SaveSettings();
+			lblStatus.Text = "Plugin Exited";
+		}
 
-                if (col.ValueType == typeof(string) || col.ValueType == typeof(int))
-                {
-                    TextBox tb = filterBoxes[col.Index] as TextBox;
-                    if(tb != null)
-                    {
-                        tb.Left = rect.Left;
-                        tb.Width = rect.Width;
-                        if(tb.Top != filterPanel.Height - tb.Height - 1)
-                            tb.Top = filterPanel.Height - tb.Height - 1;
-                    }
-                }
-                else if (col.ValueType == typeof(bool))
-                {
-                    CheckBox cb = filterBoxes[col.Index] as CheckBox;
-                    if (cb != null)
-                    {
-                        cb.Left = rect.Left;
-                        cb.Width = rect.Width;
-                        cb.Height = 18;
-                        cb.Top = filterPanel.Height - cb.Height - 2;
-                        cb.CheckAlign = ContentAlignment.MiddleCenter;
-                    }
-                }
-            }
-        }
-
-        void ApplyFilters()
-        {
-            var filters = new List<string>();
-
-            foreach (DataGridViewColumn col in dataGridView1.Columns)
-            {
-                if (!filterBoxes.ContainsKey(col.Index)) continue;
-                if (col.Index < firstVisibleFilter || col.Index > lastVisibleFilter) continue;
-
-                if (col.ValueType == typeof(string) || col.ValueType == typeof(int))
-                {
-                    TextBox tb = filterBoxes[col.Index] as TextBox;
-                    var value = tb.Text;
-
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        string esc = EscapeFilterValue(value);
-                        filters.Add($"[{col.DataPropertyName}] LIKE '%{esc}%'");
-                    }
-                }
-                else if (col.ValueType == typeof(bool))
-                {
-                    CheckBox cb = filterBoxes[col.Index] as CheckBox;
-                    bool value = cb.Checked;
-                    if(value)
-                        filters.Add($"[{col.DataPropertyName}] = '{value}'");
-                }
-            }
-
-            filtering = true;
-            try
-            {
-                if (filters.Count > 0)
-                    bindingSource.Filter = string.Join(" AND ", filters);
-                else
-                    bindingSource.Filter = string.Empty;
-            }
-            catch (Exception ex)
-            {
-                SimpleMessageBox.ShowDialog(ActGlobals.oFormActMain, "Invalid filter: " + ex.ToString(), "Filter Error");
-            }
-            finally
-            {
-                filtering = false;
-            }
-            AlignFilterBoxes();
-        }
-
-        string EscapeFilterValue(string value)
-        {
-            var sb = new StringBuilder(value.Length * 2);
-
-            foreach (char c in value)
-            {
-                switch (c)
-                {
-                    case '[':
-                        sb.Append("[[]");
-                        break;
-                    case ']':
-                        sb.Append("[]]");
-                        break;
-                    case '\'':
-                        sb.Append("''");
-                        break;
-                    default:
-                        sb.Append(c);
-                        break;
-                }
-            }
-
-            return sb.ToString();
-        }
-
-        private void CheckZoneFilter(object o)
-        {
-            try
-            {
-                DataRow[] foundRows = spells.Select($"Zone='{EscapeFilterValue(currentZone)}'");
-                if (foundRows.Length > 0)
-                {
-                    filteredZone = currentZone;
-                    TextBox tb = filterPanel.Controls["textBoxZone"] as TextBox;
-                    if (tb != null)
-                        tb.Text = filteredZone;
-                }
-            }
-            catch { }
-        }
-
-        #endregion Filters
+        #endregion
 
         #region ACT hooks
 
         private void OFormActMain_OnCombatStart(bool isImport, CombatToggleEventArgs encounterInfo)
         {
-            currentZone = ActGlobals.oFormActMain.CurrentZone;
-            Match match = reCleanActZone.Match(currentZone);
-            if (match.Success)
-                currentZone = match.Groups["zone"].Value.Trim();
-
-            if(currentZone != filteredZone)
-            {
-                mUiContext.Post(CheckZoneFilter, null);
-            }
-
             Enqueue(new EventDescription { CombatStart=true, CombatToggleArgs=encounterInfo });
         }
 
@@ -485,35 +333,40 @@ namespace ACT_ChainTimers
 
         void oFormActMain_UpdateCheckClicked()
         {
+            int pluginId = 109;
+
             try
             {
                 Version localVersion = this.GetType().Assembly.GetName().Version;
-                Task<Version> vtask = Task.Run(() => { return GetRemoteVersionAsync(); });
-                vtask.Wait();
-                if (vtask.Result > localVersion)
+                // Strip any leading 'v' from the string before passing to the Version constructor
+                Version remoteVersion = new Version(ActGlobals.oFormActMain.PluginGetRemoteVersion(pluginId).TrimStart(new char[] { 'v' }));
+                if (remoteVersion > localVersion)
                 {
-                    DialogResult result = MessageBox.Show("There is an updated version of the Parcels Plugin.\n\nSee the changes by clicking the About link in the plugin.\n\nUpdate it now?\n\n(If there is an update to ACT, you should click No and update ACT first.)",
-                        "New Version", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    Rectangle screen = Screen.GetWorkingArea(ActGlobals.oFormActMain);
+                    DialogResult result = SimpleMessageBox.Show(new Point(screen.Width / 2 - 100, screen.Height / 2 - 100),
+                          @"There is an update for the Chain Timers plugin."
+                        + @"\line\line Update it now?"
+                        + @"\line If there is an update to ACT"
+                        + @"\line you should click No and update ACT first."
+                        + @"\line\line Release notes at project website:"
+                        + @"{\line\ql " + helpUlr + "}"
+                        , "Notes New Version", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                     if (result == DialogResult.Yes)
                     {
-                        Task<FileInfo> ftask = Task.Run(() => { return GetRemoteFileAsync(); });
-                        ftask.Wait();
-                        if (ftask.Result != null)
-                        {
-                            ActPluginData pluginData = ActGlobals.oFormActMain.PluginGetSelfData(this);
-                            pluginData.pluginFile.Delete();
-                            File.Move(ftask.Result.FullName, pluginData.pluginFile.FullName);
-                            Application.DoEvents();
-                            ThreadInvokes.CheckboxSetChecked(ActGlobals.oFormActMain, pluginData.cbEnabled, false);
-                            Application.DoEvents();
-                            ThreadInvokes.CheckboxSetChecked(ActGlobals.oFormActMain, pluginData.cbEnabled, true);
-                        }
+                        FileInfo updatedFile = ActGlobals.oFormActMain.PluginDownload(pluginId);
+                        ActPluginData pluginData = ActGlobals.oFormActMain.PluginGetSelfData(this);
+                        pluginData.pluginFile.Delete();
+                        updatedFile.MoveTo(pluginData.pluginFile.FullName);
+                        Application.DoEvents();
+                        ThreadInvokes.CheckboxSetChecked(ActGlobals.oFormActMain, pluginData.cbEnabled, false);
+                        Application.DoEvents();
+                        ThreadInvokes.CheckboxSetChecked(ActGlobals.oFormActMain, pluginData.cbEnabled, true);
                     }
                 }
             }
             catch (Exception ex)
             {
-                ActGlobals.oFormActMain.WriteExceptionLog(ex, "RoR Parcels Plugin Update Download:" + ex.Message);
+                ActGlobals.oFormActMain.WriteExceptionLog(ex, "Chained Timers Plugin Update Download failed");
             }
         }
 
@@ -523,56 +376,6 @@ namespace ACT_ChainTimers
             {
                 mUiContext.Post(UiParseXml, e);
             }
-        }
-
-        private async Task<Version> GetRemoteVersionAsync()
-        {
-            try
-            {
-                using (HttpClient client = new HttpClient())
-                {
-                    ProductInfoHeaderValue hdr = new ProductInfoHeaderValue("ACT_Ror_Parcels", "1");
-                    client.DefaultRequestHeaders.UserAgent.Add(hdr);
-                    HttpResponseMessage response = await client.GetAsync(@"https://api.github.com/repos/jeffjl74/ACT_RoR_Parcels/releases/latest");
-                    if (response.IsSuccessStatusCode)
-                    {
-                        //response.EnsureSuccessStatusCode();
-                        string responseBody = await response.Content.ReadAsStringAsync();
-                        Regex reVer = new Regex(@".tag_name.:.v([^""]+)""");
-                        Match match = reVer.Match(responseBody);
-                        if (match.Success)
-                            return new Version(match.Groups[1].Value);
-                    }
-                    return new Version("0.0.0");
-                }
-            }
-            catch { return new Version("0.0.0"); }
-        }
-
-        private async Task<FileInfo> GetRemoteFileAsync()
-        {
-            try
-            {
-                using (HttpClient client = new HttpClient())
-                {
-                    ProductInfoHeaderValue hdr = new ProductInfoHeaderValue("ACT_RoR_Parcels", "1");
-                    client.DefaultRequestHeaders.UserAgent.Add(hdr);
-                    HttpResponseMessage response = await client.GetAsync(@"https://github.com/jeffjl74/ACT_RoR_Parcels/releases/latest/download/Parcels.dll");
-                    if (response.IsSuccessStatusCode)
-                    {
-                        string tmp = Path.GetTempFileName();
-                        var stream = await response.Content.ReadAsStreamAsync();
-                        var fileStream = new FileStream(tmp, FileMode.Create);
-                        await stream.CopyToAsync(fileStream);
-                        fileStream.Close();
-                        Application.DoEvents();
-                        FileInfo fi = new FileInfo(tmp);
-                        return fi;
-                    }
-                }
-                return null;
-            }
-            catch { return null; }
         }
 
         private void UiParseXml(object o)
@@ -676,7 +479,7 @@ namespace ACT_ChainTimers
 
         private void ProcessQueue()
         {
-            // runs on UI thread
+            // running on UI thread
             try
             {
                 while (eventDescriptions.TryDequeue(out EventDescription item))
@@ -701,13 +504,43 @@ namespace ACT_ChainTimers
             }
         }
 
-
         private void ProcessCombatStart(CombatToggleEventArgs args)
         {
+            if (dataGridView1.IsCurrentCellInEditMode)
+            {
+                dataGridView1.EndEdit();
+                bindingSource.EndEdit();
+            }
+            dataGridView1.ClearSelection();
+
+            // if we have timers for this zone,
+            // filter to show only those
+            currentZone = args.encounter.ZoneName;
+            Match match = reCleanActZone.Match(currentZone);
+            if (match.Success)
+                currentZone = match.Groups["zone"].Value.Trim();
             try
             {
-                foreach (DataRow row in spells.Rows)
+                TextBox tb = filterPanel.Controls["textBoxZone"] as TextBox;
+                CheckBox cb = filterPanel.Controls["checkBoxEnable"] as CheckBox;
+                if (tb != null && cb != null)
                 {
+                    cb.Checked = true;
+                    if (tb.Text != currentZone)
+                        tb.Text = currentZone; // text change will ApplyFilters()
+                    else
+                        ApplyFilters(); //re-apply since CombatEnd clears the zone filter
+                }
+            }
+            catch { }
+                
+            try
+            {
+                // look thru the filtered rows
+                foreach (DataRowView rowView in bindingSource)
+                {
+                    DataRow row = rowView.Row;
+                    Debug.WriteLineIf(debugEnabled, $"CombatStart: checking {row["Spell"]}");
                     if ((bool)row["Enable"]
                         && !string.IsNullOrWhiteSpace(row["Mob"].ToString())
                         && !string.IsNullOrWhiteSpace(row["First At"].ToString()))
@@ -721,26 +554,33 @@ namespace ACT_ChainTimers
                         }
                         if (zoneOK)
                         {
-                            Debug.WriteLine("Combat Start");
-                            row["First Timer"] = -1; //combat start indicator to watch for the mob
+                            Debug.WriteLineIf(debugEnabled, $"CombatStart: Start watching for {row["Mob"]}");
+                            row["First Active"] = true; //indicator to watch for the mob in AfterCombatAction
+                            row["1 Active"] = false;
+                            row["2 Active"] = false;
+                            row["First Late"] = false;
+                            row["1 Late"] = false;
+                            row["2 Late"] = false;
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"OnCombatStart: {ex.ToString()}");
+                Debug.WriteLineIf(debugEnabled,$"OnCombatStart: {ex.ToString()}");
             }
         }
 
         private void ProcessCombatEnd(CombatToggleEventArgs args)
         {
-            if (!importChecked) //debug, to let timers run after combat stops
+            if (!importChecked) //debug, to let timers run after combat stops when importing
             {
-                Debug.WriteLine("Combat end stopping everything");
+                Debug.WriteLineIf(debugEnabled,"Combat end stopping everything");
                 foreach (DataRow row in spells.Rows)
                 {
                     row["Mob Hit"] = false;
+                    row["First Active"] = false;
+                    row["First Late"] = false;
                     row["1 Active"] = false;
                     row["2 Late"] = false;
                     row["2 Active"] = false;
@@ -748,7 +588,14 @@ namespace ACT_ChainTimers
                     row["First Timer"] = 0;
                     row["Timer 1"] = 0;
                     row["Timer 2"] = 0;
-                    timer.Stop();
+                }
+                TextBox tb = filterPanel.Controls["textBoxZone"] as TextBox;
+                CheckBox cb = filterPanel.Controls["checkBoxEnable"] as CheckBox;
+                if (tb != null && cb != null)
+                {
+                    cb.Checked = false;
+                    tb.Text = string.Empty;
+                    ApplyFilters();
                 }
             }
         }
@@ -757,34 +604,38 @@ namespace ACT_ChainTimers
         {
             try
             {
-                foreach (DataRow row in spells.Rows)
+                foreach (DataRowView rowView in bindingSource)
                 {
+                    DataRow row = rowView.Row;
                     if ((bool)row["Enable"])
                     {
                         string zone = row["Zone"].ToString();
                         if (!string.IsNullOrWhiteSpace(zone) && zone != this.currentZone)
                             continue;
 
-                        // check for combat started but we haven't seen the mob yet
+                        // check for combat started and we have a first-cast timer
+                        bool definedMob = !string.IsNullOrWhiteSpace(row["Mob"].ToString());
+                        bool hittingMob = actionInfo.victim.Equals(row["Mob"].ToString());
                         bool watching = !string.IsNullOrWhiteSpace(row["First Timer"].ToString());
-                        if (watching && (int)row["First Timer"] < 0 && !(bool)row["Mob Hit"])
+                        if (!(bool)row["Mob Hit"]
+                            && hittingMob
+                            && watching
+                            && (bool)row["First Active"])
                         {
-                            if (actionInfo.victim.Equals(row["Mob"].ToString()))
-                            {
-                                row["Mob Hit"] = true;
-                                row["First Timer"] = row["First At"];
-                                timer.Start();
-                            }
+                            // have the right mob and a 1st timer, start it
+                            row["Mob Hit"] = true;
+                            row["First Timer"] = row["First At"];
                         }
 
                         // wait til we're fighting the specified mob
-                        if (!string.IsNullOrWhiteSpace(row["Mob"].ToString())
-                            && actionInfo.victim.Equals(row["Mob"].ToString())
+                        // in case we didn't start a first-cast timer
+                        if (definedMob
+                            && hittingMob
                             && !(bool)row["Mob Hit"])
                         {
                             row["Mob Hit"] = true;
                         }
-                        if (!string.IsNullOrWhiteSpace(row["Mob"].ToString()) && !(bool)row["Mob Hit"])
+                        if (definedMob && !(bool)row["Mob Hit"])
                             continue;
 
 
@@ -797,27 +648,44 @@ namespace ACT_ChainTimers
                             {
                                 if (!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()))
                                 {
-                                    timer.Stop();
-                                    Debug.WriteLine("combat start from scratch");
+                                    Debug.WriteLineIf(debugEnabled,"combat start from scratch");
                                     row["Timer 1"] = row["Recast 1"];
                                     row["1 Active"] = true;
                                     row["2 Late"] = false;
                                     row["1 Late"] = false;
-                                    row["First Timer"] = 0;
-                                    timer.Start();
+                                    if ((bool)row["First Active"])
+                                    {
+                                        row["First Active"] = false;
+                                        row["First Timer"] = 0;
+                                    }
                                 }
-                            }
-                            else if ((bool)row["1 Active"])
+                            } // end neither-is-active
+
+                            else if ((bool)row["1 Active"] && !string.IsNullOrWhiteSpace(row["Timer 1"].ToString()))
                             {
                                 int remains = (int)row["Timer 1"];
-                                if ((bool)row["1 Late"])
+                                if ((bool)row["1 Late"] || (bool)row["First Late"])
                                 {
-                                    // it was started by the timer
-                                    // restart it based on the hit
-                                    Debug.WriteLine("combat re-init timer 1 from hit");
-                                    row["Timer 1"] = row["Recast 1"];
-                                    row["1 Late"] = false;
-                                    remains = (int)row["Timer 1"];
+                                    // It was started by the timer.
+                                    // If we are in the warning window...
+                                    if (!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()) && remains > ((int)row["Recast 1"] - warning))
+                                    {
+                                        // restart it based on the hit
+                                        Debug.WriteLineIf(debugEnabled,"combat re-init timer 1 from hit");
+                                        row["Timer 1"] = row["Recast 1"];
+                                        row["1 Late"] = false;
+                                        row["First Late"] = false;
+                                        if ((bool)row["First Active"])
+                                        {
+                                            row["First Active"] = false;
+                                            row["First Timer"] = 0;
+                                        }
+                                        remains = (int)row["Timer 1"];
+                                        // and stop any late counter on Recast 2
+                                        row["Timer 2"] = 0;
+                                        row["1 Late"] = false;
+                                        row["2 Active"] = false;
+                                    }
                                 }
                                 if (remains <= warning)
                                 {
@@ -825,24 +693,20 @@ namespace ACT_ChainTimers
                                     if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
                                     {
                                         // start timer 2
-                                        timer.Stop();
-                                        Debug.WriteLine("combat 1 start 2");
+                                        Debug.WriteLineIf(debugEnabled,"combat 1 start 2");
                                         row["Timer 1"] = 0;
                                         row["Timer 2"] = row["Recast 2"];
                                         row["1 Active"] = false;
                                         row["2 Late"] = false;
                                         row["2 Active"] = true;
-                                        timer.Start();
                                     }
                                     else if (!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()))
                                     {
                                         // re-start timer 1
-                                        timer.Stop();
-                                        Debug.WriteLine("combat 1 restart 1");
+                                        Debug.WriteLineIf(debugEnabled,"combat 1 restart 1");
                                         row["Timer 1"] = row["Recast 1"];
                                         row["1 Active"] = true;
                                         row["1 Late"] = false;
-                                        timer.Start();
                                     }
                                 }
 
@@ -856,40 +720,40 @@ namespace ACT_ChainTimers
                                     // the timer says we are late for the 2nd recast
                                     // so it started the 2nd timer
                                     // but now we got hit
-                                    // so re-init the timer
-                                    Debug.WriteLine("combat: re-init timer 2 from hit");
-                                    row["Timer 2"] = row["Recast 2"];
-                                    row["2 Late"] = false;
-                                    remains = (int)row["Timer 2"];
+                                    // so if we are in the warning window...
+                                    if(remains > ((int)row["Recast 2"] - warning))
+                                    {
+                                        // re-init the timer
+                                        Debug.WriteLineIf(debugEnabled,"combat: re-init timer 2 from hit");
+                                        row["Timer 2"] = row["Recast 2"];
+                                        row["2 Late"] = false;
+                                        remains = (int)row["Timer 2"];
+                                    }
                                 }
                                 if (remains <= warning)
                                 {
                                     //we got hit a little before we expected it
                                     // start timer 1
-                                    timer.Stop();
-                                    Debug.WriteLine("combat 2 starting 1");
+                                    Debug.WriteLineIf(debugEnabled,"combat 2 starting 1");
                                     row["Timer 1"] = row["Recast 1"];
                                     row["1 Active"] = true;
                                     row["2 Active"] = false;
                                     row["Timer 2"] = 0;
-                                    timer.Start();
                                 }
                             }
-                            else if ((bool)row["1 Late"])
+                            else if ((bool)row["1 Late"] && !string.IsNullOrWhiteSpace(row["Timer 1"].ToString()))
                             {
                                 int remains = (int)row["Timer 1"];
-                                if (remains + warning >= (int)row["Recast 1"])
+                                if (!string.IsNullOrWhiteSpace(row["Recast 1"].ToString()) && remains + warning >= (int)row["Recast 1"])
                                 {
                                     //we got hit a little after we expected it
                                     // restart timer 1
-                                    timer.Stop();
-                                    Debug.WriteLine("combat 2 start 1 late");
+                                    Debug.WriteLineIf(debugEnabled,"combat 2 start 1 late");
                                     row["Timer 1"] = row["Recast 1"];
                                     row["1 Active"] = true;
                                     row["2 Late"] = false;
                                     row["2 Active"] = false;
                                     row["1 Late"] = false;
-                                    timer.Start();
                                 }
                             }
                         }
@@ -898,7 +762,7 @@ namespace ACT_ChainTimers
             }
             catch (Exception e)
             {
-                Debug.WriteLine($"AfterCombatAction: {e.ToString()}");
+                Debug.WriteLineIf(debugEnabled,$"AfterCombatAction: {e.ToString()}");
             }
         }
 
@@ -911,8 +775,9 @@ namespace ACT_ChainTimers
         {
             try
             {
-                foreach (DataRow row in spells.Rows)
+                foreach (DataRowView rowView in bindingSource)
                 {
+                    DataRow row = rowView.Row;
                     if (!(bool)row["Enable"])
                         continue;
 
@@ -924,7 +789,7 @@ namespace ACT_ChainTimers
                     int warning = (int)row["Warn At"];
 
                     // watch for very first alert
-                    // triggered by start of the fight rather than spell hit
+                    // triggered by start of the fight
                     if ((bool)row["Mob Hit"])
                     {
                         int remaining = (int)row["First Timer"];
@@ -934,22 +799,51 @@ namespace ACT_ChainTimers
                             row["First Timer"] = remaining;
                             if (remaining == warning && !(bool)row["1 Active"])
                             {
-                                Debug.WriteLine("Timer: combat start alert");
+                                Debug.WriteLineIf(debugEnabled,"Timer: combat start alert");
                                 if (!string.IsNullOrWhiteSpace(row["Alert"].ToString()))
                                     ActGlobals.oFormActMain.TTS(row["Alert"].ToString());
                             }
                             if (remaining == 0 && !(bool)row["1 Active"] && fillMissed)
                             {
                                 // didn't see the first hit but want to assume it happened
-                                Debug.WriteLine("Timer: first fill-missing, starting recast 1");
+                                Debug.WriteLineIf(debugEnabled,"Timer: first fill-missing, starting recast 1");
+                                row["First Late"] = true;
                                 row["1 Active"] = true;
-                                row["1 Late"] = true;
+                                row["1 Late"] = false;
                                 row["Timer 1"] = (int)row["Recast 1"] + 1; //+1 since about to subtract one, in "1 Active" processing
+                            }
+                        }
+                        else if (remaining <= 0)
+                        {
+                            if (remaining == 0)
+                            {
+                                // progress only if we're still in the initial start of fight window
+                                if ((bool)row["First Active"])
+                                {
+                                    // just hit the mob, not with the spell
+                                    remaining--;
+                                    row["First Timer"] = remaining;
+                                    row["First Late"] = true;
+                                }
+                            }
+                            else if (remaining > (-warning) && (bool)row["First Active"])
+                            {
+                                remaining--;
+                                row["First Timer"] = remaining;
+                            }
+                            else
+                            {
+                                // timed out
+                                remaining = 0;
+                                if((int)row["First Timer"] != 0)  // avoid unnecessay re-paint
+                                    row["First Timer"] = 0;
+                                row["First Active"] = false;
+                                row["First Late"] = false;
                             }
                         }
                     }
 
-                    if ((bool)row["1 Active"])
+                    if ((bool)row["1 Active"] && !string.IsNullOrWhiteSpace(row["Timer 1"].ToString()))
                     {
                         int remains = (int)row["Timer 1"] - 1;
                         row["Timer 1"] = remains;
@@ -959,51 +853,52 @@ namespace ACT_ChainTimers
 
                         if (remains <= 0)
                         {
-                            Debug.WriteLine("Timer: expired 1");
+                            Debug.WriteLineIf(debugEnabled,"Timer: expired 1");
                             if (fillMissed)
                             {
                                 if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
                                 {
-                                    Debug.WriteLine("Timer: starting 2");
-                                    row["2 Late"] = true;
-                                    row["2 Active"] = true;
-                                    row["1 Late"] = false;
-                                    row["1 Active"] = false;
-                                    row["Timer 2"] = row["Recast 2"];
+                                    if (!(bool)row["2 Active"])
+                                    {
+                                        Debug.WriteLineIf(debugEnabled, "Timer: starting 2");
+                                        row["2 Late"] = true;
+                                        row["2 Active"] = true;
+                                        row["1 Late"] = false;
+                                        row["Timer 2"] = row["Recast 2"];
+                                    }
                                 }
                                 else
                                 {
-                                    Debug.WriteLine("Timer: re-starting 1");
+                                    Debug.WriteLineIf(debugEnabled,"Timer: re-starting 1");
                                     row["1 Active"] = true;
                                     row["1 Late"] = true;
                                     row["Timer 1"] = row["Recast 1"];
                                 }
                             }
+
+                            if (remains <= (-warning))
+                            {
+                                Debug.WriteLineIf(debugEnabled,"Timer: done waiting for 1, going inactive");
+                                row["Timer 1"] = 0;
+                                row["1 Active"] = false;
+                            }
                             else
                             {
-                                if (remains <= (-1 * warning))
+                                if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
                                 {
-                                    Debug.WriteLine("Timer: done waiting for 1, going inactive");
-                                    row["Timer 1"] = 0;
-                                    row["1 Active"] = false;
+                                    Debug.WriteLineIf(debugEnabled,"Timer: missing 2, it's late");
+                                    row["2 Late"] = true;
                                 }
                                 else
                                 {
-                                    if (!string.IsNullOrWhiteSpace(row["Recast 2"].ToString()))
-                                    {
-                                        Debug.WriteLine("Timer: missing 2, it's late");
-                                        row["2 Late"] = true;
-                                    }
-                                    else
-                                    {
-                                        Debug.WriteLine("Timer: missing another 1, it's late");
-                                        row["1 Late"] = true;
-                                    }
+                                    Debug.WriteLineIf(debugEnabled,"Timer: missing another 1, it's late");
+                                    row["1 Late"] = true;
                                 }
                             }
                         }
-                    }
-                    else if ((bool)row["2 Active"])
+                    } // end of 1 Active
+
+                    if ((bool)row["2 Active"] && !string.IsNullOrWhiteSpace(row["Timer 2"].ToString()))
                     {
                         int remains = (int)row["Timer 2"] - 1;
                         row["Timer 2"] = remains;
@@ -1013,28 +908,29 @@ namespace ACT_ChainTimers
 
                         if (remains <= 0)
                         {
-                            Debug.WriteLine("Timer: expired 2");
+                            Debug.WriteLineIf(debugEnabled,"Timer: expired 2");
                             row["1 Late"] = true;
                             if (fillMissed)
                             {
-                                Debug.WriteLine("Timer: starting 1");
-                                row["1 Active"] = true;
-                                row["2 Late"] = false;
-                                row["Timer 1"] = row["Recast 1"];
+                                if (!(bool)row["1 Active"])
+                                {
+                                    Debug.WriteLineIf(debugEnabled, "Timer: starting 1");
+                                    row["1 Active"] = true;
+                                    //row["2 Active"] = false;
+                                    row["2 Late"] = false;
+                                    row["Timer 1"] = row["Recast 1"];
+                                }
+                            }
+                            if (remains <= (-warning))
+                            {
+                                Debug.WriteLineIf(debugEnabled,"Timer: done waiting for 2, going inactive");
+                                row["Timer 2"] = 0;
+                                row["2 Active"] = false;
                             }
                             else
                             {
-                                if (remains <= -warning)
-                                {
-                                    Debug.WriteLine("Timer: done waiting for 2, going inactive");
-                                    row["Timer 2"] = 0;
-                                    row["2 Active"] = false;
-                                }
-                                else
-                                {
-                                    Debug.WriteLine("Timer: missing 1, it's late");
-                                    row["1 Late"] = true;
-                                }
+                                Debug.WriteLineIf(debugEnabled,"Timer: missing 1, it's late");
+                                row["1 Late"] = true;
                             }
                         }
                     }
@@ -1042,13 +938,22 @@ namespace ACT_ChainTimers
             }
             catch (Exception tte)
             {
-                Debug.WriteLine($"Timer: {tte}");
+                Debug.WriteLineIf(debugEnabled,$"Timer: {tte}");
             }
         }
 
         #endregion Progress Processing
 
         #region Datagrid
+
+        private void Tab_VisibleChanged(object sender, EventArgs e)
+        {
+            if (firstShow)
+            {
+                AutoSizeGridColumns();
+                firstShow = false;
+            }
+        }
 
         private void AutoSizeGridColumns()
         {
@@ -1072,24 +977,9 @@ namespace ACT_ChainTimers
         private void dataGridView1_DataError(object sender, DataGridViewDataErrorEventArgs e)
         {
             // just don't crash
-            Debug.WriteLine($"Data Error: {e.RowIndex},{e.ColumnIndex} {e.Exception.Message}");
+            var dgv = sender as DataGridView;
+            Debug.WriteLineIf(debugEnabled,$"Data Error: {e.RowIndex},{e.ColumnIndex} {e.Exception.Message}");
             e.Cancel = true;
-        }
-
-        private void dataGridView1_RowPostPaint(object sender, DataGridViewRowPostPaintEventArgs e)
-        {
-            // add row number to the row headers
-            var grid = sender as DataGridView;
-            var rowIdx = (e.RowIndex + 1).ToString();
-
-            var centerFormat = new StringFormat()
-            {
-                Alignment = StringAlignment.Far,
-                LineAlignment = StringAlignment.Center
-            };
-
-            var headerBounds = new Rectangle(e.RowBounds.Left, e.RowBounds.Top, grid.RowHeadersWidth - 2, e.RowBounds.Height);
-            e.Graphics.DrawString(rowIdx, grid.Font, SystemBrushes.ControlText, headerBounds, centerFormat);
         }
 
         private void dataGridView1_CellToolTipTextNeeded(object sender, DataGridViewCellToolTipTextNeededEventArgs e)
@@ -1108,38 +998,39 @@ namespace ACT_ChainTimers
         {
             if (e.ColumnIndex == dataGridView1.Columns["Reset"].Index)
             {
-                Debug.WriteLine($"Reset button {e.RowIndex} clicked");
+                Debug.WriteLineIf(debugEnabled,$"Reset button {e.RowIndex} clicked");
                 if(e.RowIndex >= 0)
                 {
                     if (dataGridView1.Rows[e.RowIndex].DataBoundItem is DataRowView drv)
                     {
                         DataRow row = drv.Row;
                         row["Mob Hit"] = false;
-                        row["1 Active"] = false;
-                        row["1 Late"] = false;
-                        row["2 Active"] = false;
-                        row["2 Late"] = false;
                         row["First Timer"] = 0;
+                        row["First Active"] = false;
+                        row["First Late"] = false;
+                        row["1 Active"] = false;
                         row["Timer 1"] = 0;
+                        row["2 Late"] = false;
+                        row["2 Active"] = false;
                         row["Timer 2"] = 0;
+                        row["1 Late"] = false;
                     }
                 }
             }
             else if (e.ColumnIndex == dataGridView1.Columns["Realign"].Index)
             {
-                Debug.WriteLine($"Realign button {e.RowIndex} clicked");
+                Debug.WriteLineIf(debugEnabled,$"Realign button {e.RowIndex} clicked");
                 if (e.RowIndex >= 0)
                 {
                     if (dataGridView1.Rows[e.RowIndex].DataBoundItem is DataRowView drv)
                     {
                         DataRow row = drv.Row;
                         row["1 Active"] = false;
-                        row["1 Late"] = false;
-                        row["2 Active"] = false;
-                        row["2 Late"] = false;
-                        row["First Timer"] = 0;
                         row["Timer 1"] = 0;
+                        row["2 Late"] = false;
+                        row["2 Active"] = false;
                         row["Timer 2"] = 0;
+                        row["1 Late"] = false;
                     }
                 }
             }
@@ -1147,67 +1038,248 @@ namespace ACT_ChainTimers
 
         private void dataGridView1_CellPainting(object sender, DataGridViewCellPaintingEventArgs e)
         {
+            if (e.RowIndex < 0)
+                return;
+
             // progress bars
-            for (int i = 0; i < progressColumns.Count; i++)
+            string maxColName;
+            if(progressBars.TryGetValue(e.ColumnIndex, out maxColName))
             {
-                if (this.dataGridView1.Columns[progressColumns[i]].Index == e.ColumnIndex && e.RowIndex >= 0)
+                //Debug.WriteLineIf(debugEnabled, $"paint[{e.RowIndex}][{e.ColumnIndex}]={e.Value}");
+                using (
+                    Brush gridBrush = new SolidBrush(dataGridView1.GridColor),
+                    backColorBrush = new SolidBrush(e.CellStyle.BackColor),
+                    warningBrush = new SolidBrush(Color.MistyRose),
+                    progressBrush = new SolidBrush(Color.LightGreen))
                 {
-                    using (
-                        Brush gridBrush = new SolidBrush(this.dataGridView1.GridColor),
-                        backColorBrush = new SolidBrush(e.CellStyle.BackColor),
-                        progressBrush = new SolidBrush(Color.LightGreen))
+                    using (Pen gridLinePen = new Pen(gridBrush))
                     {
-                        using (Pen gridLinePen = new Pen(gridBrush))
+                        // Erase the cell.
+                        e.Graphics.FillRectangle(backColorBrush, e.CellBounds);
+
+                        // Draw the grid lines (only the right and bottom lines;
+                        // DataGridView takes care of the others).
+                        e.Graphics.DrawLine(gridLinePen, e.CellBounds.Left,
+                            e.CellBounds.Bottom - 1, e.CellBounds.Right - 1,
+                            e.CellBounds.Bottom - 1);
+                        e.Graphics.DrawLine(gridLinePen, e.CellBounds.Right - 1,
+                            e.CellBounds.Top, e.CellBounds.Right - 1,
+                            e.CellBounds.Bottom);
+
+                        // Draw the text content of the cell, ignoring alignment.
+                        int value;
+                        if (e.Value != null && Int32.TryParse(e.Value.ToString(), out value))
                         {
-                            // Erase the cell.
-                            e.Graphics.FillRectangle(backColorBrush, e.CellBounds);
-
-                            // Draw the grid lines (only the right and bottom lines;
-                            // DataGridView takes care of the others).
-                            e.Graphics.DrawLine(gridLinePen, e.CellBounds.Left,
-                                e.CellBounds.Bottom - 1, e.CellBounds.Right - 1,
-                                e.CellBounds.Bottom - 1);
-                            e.Graphics.DrawLine(gridLinePen, e.CellBounds.Right - 1,
-                                e.CellBounds.Top, e.CellBounds.Right - 1,
-                                e.CellBounds.Bottom);
-
-                            // Draw the text content of the cell, ignoring alignment.
-                            int value;
-                            if (e.Value != null && Int32.TryParse(e.Value.ToString(), out value))
+                            if (value > 0)
                             {
-                                if (value > 0)
+                                if (dataGridView1.Rows[e.RowIndex].DataBoundItem is DataRowView drv)
                                 {
-                                    if (dataGridView1.Rows[e.RowIndex].DataBoundItem is DataRowView drv)
-                                    {
-                                        DataRow row = drv.Row;
-                                        int maxVal = (int)row[progressMaxColumns[i]];
-                                        float progress = (float)value / (float)maxVal;
-                                        Rectangle progRect = new Rectangle(e.CellBounds.X + 1,
-                                                            e.CellBounds.Y + 1, e.CellBounds.Width - 4,
-                                                            e.CellBounds.Height - 4);
-                                        int progWidth = (int)((float)progRect.Width * progress);
-                                        progRect.Width = progWidth;
-                                        e.Graphics.FillRectangle(progressBrush, progRect);
-                                    }
-
-
-                                    e.Graphics.DrawString(e.Value.ToString(), e.CellStyle.Font,
-                                        Brushes.Black, e.CellBounds.X + 2,
-                                        e.CellBounds.Y + 2, StringFormat.GenericDefault);
+                                    DataRow row = drv.Row;
+                                    int maxVal = (int)row[maxColName];
+                                    float progress = (float)value / (float)maxVal;
+                                    Rectangle progRect = new Rectangle(e.CellBounds.X + 1,
+                                                        e.CellBounds.Y + 1, e.CellBounds.Width - 4,
+                                                        e.CellBounds.Height - 4);
+                                    int progWidth = (int)((float)progRect.Width * progress);
+                                    progRect.Width = progWidth;
+                                    e.Graphics.FillRectangle(progressBrush, progRect);
                                 }
-                                else if (value < 0)
-                                    e.Graphics.DrawString(e.Value.ToString(), e.CellStyle.Font,
-                                        Brushes.Red, e.CellBounds.X + 2,
-                                        e.CellBounds.Y + 2, StringFormat.GenericDefault);
+
+                                e.Graphics.DrawString(e.Value.ToString(), e.CellStyle.Font,
+                                    Brushes.Black, e.CellBounds.X + 2,
+                                    e.CellBounds.Y + 2, StringFormat.GenericDefault);
                             }
-                            e.Handled = true;
+                            else if (value < 0)
+                            {
+                                if (dataGridView1.Rows[e.RowIndex].DataBoundItem is DataRowView drv)
+                                {
+                                    DataRow row = drv.Row;
+                                    float maxVal = (float)((int)row["Warn At"]);
+                                    float progress = (maxVal + (float)value) / maxVal;
+                                    Rectangle progRect = new Rectangle(e.CellBounds.X + 1,
+                                                        e.CellBounds.Y + 1, e.CellBounds.Width - 4,
+                                                        e.CellBounds.Height - 4);
+                                    int progWidth = (int)((float)progRect.Width * progress);
+                                    progRect.Width = progWidth;
+                                    e.Graphics.FillRectangle(warningBrush, progRect);
+                                }
+
+                                e.Graphics.DrawString(e.Value.ToString(), e.CellStyle.Font,
+                                    Brushes.Red, e.CellBounds.X + 2,
+                                    e.CellBounds.Y + 2, StringFormat.GenericDefault);
+                            }
                         }
+                        e.Handled = true;
                     }
                 }
             }
         }
 
         #endregion Datagrid
+
+        #region Filters
+
+        private void Tb_ClickX(object sender, EventArgs e)
+        {
+            TextBoxX tb = sender as TextBoxX;
+            if (tb != null)
+                tb.Text = string.Empty;
+        }
+
+        private void Cb_CheckedChanged(object sender, EventArgs e)
+        {
+            ApplyFilters();
+        }
+
+        private void Tb_TextChanged(object sender, EventArgs e)
+        {
+            ApplyFilters();
+        }
+
+        void SetFilterPlaceholder(TextBox tb)
+        {
+            SendMessage(tb.Handle, EM_SETCUEBANNER, IntPtr.Zero, "Filter");
+        }
+
+        void AlignFilterBoxes()
+        {
+            if (filtering)
+            {
+                return; // let the view settle before we re-size
+            }
+
+            foreach (DataGridViewColumn col in dataGridView1.Columns)
+            {
+                if (!filterBoxes.ContainsKey(col.Index)) continue;
+
+                if (col.Index < firstVisibleFilter || col.Index > lastVisibleFilter)
+                    continue;
+
+                Rectangle rect = dataGridView1.GetCellDisplayRectangle(col.Index, -1, true);
+                if (rect.Width == 0) continue; // hasn't been displayed / calculated yet
+
+                if (col.ValueType == typeof(string) || col.ValueType == typeof(int))
+                {
+                    TextBox tb = filterBoxes[col.Index] as TextBox;
+                    if (tb != null)
+                    {
+                        tb.Left = rect.Left;
+                        tb.Width = rect.Width;
+                        if (tb.Top != filterPanel.Height - tb.Height - 1)
+                            tb.Top = filterPanel.Height - tb.Height - 1;
+                    }
+                }
+                else if (col.ValueType == typeof(bool))
+                {
+                    CheckBox cb = filterBoxes[col.Index] as CheckBox;
+                    if (cb != null)
+                    {
+                        cb.Left = rect.Left;
+                        cb.Width = rect.Width;
+                        cb.Height = 18;
+                        cb.Top = filterPanel.Height - cb.Height - 2;
+                        cb.CheckAlign = ContentAlignment.MiddleCenter;
+                    }
+                }
+            }
+        }
+
+        void ApplyFilters()
+        {
+            var filters = new List<string>();
+
+            foreach (DataGridViewColumn col in dataGridView1.Columns)
+            {
+                if (!filterBoxes.ContainsKey(col.Index)) continue;
+                if (col.Index < firstVisibleFilter || col.Index > lastVisibleFilter) continue;
+
+                if (col.ValueType == typeof(string))
+                {
+                    TextBox tb = filterBoxes[col.Index] as TextBox;
+                    string value = tb.Text;
+
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        string esc = EscapeFilterValue(value);
+                        if(col.Name == "Zone")
+                        {
+                            // include rows with no zone name
+                            filters.Add($"([{col.DataPropertyName}] LIKE '%{esc}%' OR [{col.DataPropertyName}]='')");
+                        }
+                        else
+                            filters.Add($"[{col.DataPropertyName}] LIKE '%{esc}%'");
+                    }
+                }
+                else if (col.ValueType == typeof(int))
+                {
+                    TextBox tb = filterBoxes[col.Index] as TextBox;
+                    string value = tb.Text;
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        if (value.Any(c => c == '<' || c == '>' || c == '='))
+                        {
+                            if (value.Any(char.IsDigit))
+                                filters.Add($"[{col.DataPropertyName}] {value}");
+                        }
+                        else
+                            filters.Add($"[{col.DataPropertyName}] = '{value}'");
+                    }
+                }
+                else if (col.ValueType == typeof(bool))
+                {
+                    CheckBox cb = filterBoxes[col.Index] as CheckBox;
+                    bool value = cb.Checked;
+                    if (value)
+                        filters.Add($"[{col.DataPropertyName}] = '{value}'");
+                }
+            }
+
+            filtering = true; // "turn off" UI updates
+            try
+            {
+                if (filters.Count > 0)
+                    bindingSource.Filter = string.Join(" AND ", filters);
+                else
+                    bindingSource.Filter = string.Empty;
+            }
+            catch (Exception ex)
+            {
+                SimpleMessageBox.ShowDialog(ActGlobals.oFormActMain, "Invalid filter: " + ex.ToString(), "Filter Error");
+            }
+            finally
+            {
+                filtering = false;
+            }
+            AlignFilterBoxes();
+        }
+
+        string EscapeFilterValue(string value)
+        {
+            var sb = new StringBuilder(value.Length * 2);
+
+            foreach (char c in value)
+            {
+                switch (c)
+                {
+                    case '[':
+                        sb.Append("[[]");
+                        break;
+                    case ']':
+                        sb.Append("[]]");
+                        break;
+                    case '\'':
+                        sb.Append("''");
+                        break;
+                    default:
+                        sb.Append(c);
+                        break;
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        #endregion Filters
 
         #region Buttons
 
@@ -1275,18 +1347,18 @@ namespace ACT_ChainTimers
 
         private void buttonTest_Click(object sender, EventArgs e)
         {
-            //string p = "S=\"Constant Glare\" M=\"Oogiloi Eye\" Z=\"Zon Zobboz: The Outer Swarmyard [Raid]\" F=\"164\" R1=\"77\" R2=\"37\" L=\"T\" W=\"7\" A=\"fear in 5\" />";
-            //var fieldPattern = @"(\w+)=""([^""]*)""";
-            //var fieldMatches = Regex.Matches(p, fieldPattern);
-            //var xmlFields = new Dictionary<string, string>();
-            //foreach (Match match in fieldMatches)
-            //{
-            //    string fieldName = match.Groups[1].Value;
-            //    string fieldValue = match.Groups[2].Value;
-            //    xmlFields[fieldName] = fieldValue;
-            //}
-            //XmlSnippetEventArgs xe = new XmlSnippetEventArgs("Chain", xmlFields, p);
-            //UiParseXml(xe);
+            string p = "S=\"Constant Glare\" M=\"Oogiloi Eye\" Z=\"Zon Zobboz: The Outer Swarmyard [Raid]\" F=\"164\" R1=\"77\" R2=\"37\" L=\"T\" W=\"7\" A=\"fear in 5\" />";
+            var fieldPattern = @"(\w+)=""([^""]*)""";
+            var fieldMatches = Regex.Matches(p, fieldPattern);
+            var xmlFields = new Dictionary<string, string>();
+            foreach (Match match in fieldMatches)
+            {
+                string fieldName = match.Groups[1].Value;
+                string fieldValue = match.Groups[2].Value;
+                xmlFields[fieldName] = fieldValue;
+            }
+            XmlSnippetEventArgs xe = new XmlSnippetEventArgs("Chain", xmlFields, p);
+            UiParseXml(xe);
 
         }
 
@@ -1299,20 +1371,43 @@ namespace ACT_ChainTimers
         {
             if (checkBoxFit.Checked)
             {
-                int wide = panelData.ClientRectangle.Width / (dataGridView1.Columns.Count + 1);
+                int colCount = 0;
+                for (int i =  0; i < dataGridView1.Columns.Count; i++)
+                {
+                    if (dataGridView1.Columns[i].Visible)
+                        colCount++;
+                }
+                int wide = panelData.ClientRectangle.Width / (colCount + 1);
                 if (wide < 50)
                     wide = 50;
                 for (int i = 0; i <= dataGridView1.Columns.Count - 1; i++)
                 {
                     dataGridView1.Columns[i].Width = dataGridView1.Columns[i].Width = wide;
                 }
-                checkBoxFit.Text = "Fit columns to contents";
             }
             else
             {
                 AutoSizeGridColumns();
-                checkBoxFit.Text = "Fit columns to window";
             }
+        }
+
+        private void checkBoxShowStates_CheckedChanged(object sender, EventArgs e)
+        {
+            if (checkBoxShowStates.Checked)
+            {
+                foreach (string col in optionalColumns)
+                {
+                    dataGridView1.Columns[col].Visible = true;
+                }
+            }
+            else
+            {
+                foreach (string col in optionalColumns)
+                {
+                    dataGridView1.Columns[col].Visible = false;
+                }
+            }
+            AlignFilterBoxes();
         }
 
         #endregion Buttons
@@ -1430,6 +1525,10 @@ namespace ACT_ChainTimers
                 copyZoneFromMainTabToolStripMenuItem.Enabled = true;
             else
                 copyZoneFromMainTabToolStripMenuItem.Enabled = false;
+            if (!string.IsNullOrWhiteSpace(dataGridView1.Rows[contextRow].Cells[contextCol].Value.ToString()))
+                setFilterToThisZoneToolStripMenuItem.Enabled = true;
+            else
+                setFilterToThisZoneToolStripMenuItem.Enabled = false;
         }
 
         private void copyCurrentZoneToolStripMenuItem_Click(object sender, EventArgs e)
@@ -1467,6 +1566,23 @@ namespace ACT_ChainTimers
                     dataGridView1.Refresh();
                 }
             }
+        }
+
+        private void setFilterToThisZoneToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                string zone = dataGridView1.Rows[contextRow].Cells[contextCol].Value.ToString();
+                if (!string.IsNullOrWhiteSpace(zone))
+                {
+                    TextBox tb = filterPanel.Controls["textBoxZone"] as TextBox;
+                    if (tb != null)
+                    {
+                        tb.Text = zone;
+                    }
+                }
+            }
+            catch { }
         }
 
         #endregion Context menus

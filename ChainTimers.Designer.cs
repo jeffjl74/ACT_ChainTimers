@@ -35,6 +35,8 @@ namespace ACT_ChainTimers
             this.dataGridView1 = new System.Windows.Forms.DataGridView();
             this.panelData = new System.Windows.Forms.Panel();
             this.panelControls = new System.Windows.Forms.Panel();
+            this.checkBoxShowStates = new System.Windows.Forms.CheckBox();
+            this.checkBoxFit = new System.Windows.Forms.CheckBox();
             this.buttonHelp = new System.Windows.Forms.Button();
             this.buttonTest = new System.Windows.Forms.Button();
             this.buttonShare = new System.Windows.Forms.Button();
@@ -46,9 +48,9 @@ namespace ACT_ChainTimers
             this.contextMenuStripZone = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.copyCurrentZoneToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.copyZoneFromMainTabToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.setFilterToThisZoneToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.contextMenuStripSpell = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.copySpellFromMainTabToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.checkBoxFit = new System.Windows.Forms.CheckBox();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).BeginInit();
             this.panelData.SuspendLayout();
             this.panelControls.SuspendLayout();
@@ -71,7 +73,6 @@ namespace ACT_ChainTimers
             this.dataGridView1.CellPainting += new System.Windows.Forms.DataGridViewCellPaintingEventHandler(this.dataGridView1_CellPainting);
             this.dataGridView1.CellToolTipTextNeeded += new System.Windows.Forms.DataGridViewCellToolTipTextNeededEventHandler(this.dataGridView1_CellToolTipTextNeeded);
             this.dataGridView1.DataError += new System.Windows.Forms.DataGridViewDataErrorEventHandler(this.dataGridView1_DataError);
-            this.dataGridView1.RowPostPaint += new System.Windows.Forms.DataGridViewRowPostPaintEventHandler(this.dataGridView1_RowPostPaint);
             // 
             // panelData
             // 
@@ -84,6 +85,7 @@ namespace ACT_ChainTimers
             // 
             // panelControls
             // 
+            this.panelControls.Controls.Add(this.checkBoxShowStates);
             this.panelControls.Controls.Add(this.checkBoxFit);
             this.panelControls.Controls.Add(this.buttonHelp);
             this.panelControls.Controls.Add(this.buttonTest);
@@ -94,6 +96,30 @@ namespace ACT_ChainTimers
             this.panelControls.Name = "panelControls";
             this.panelControls.Size = new System.Drawing.Size(686, 35);
             this.panelControls.TabIndex = 4;
+            // 
+            // checkBoxShowStates
+            // 
+            this.checkBoxShowStates.AutoSize = true;
+            this.checkBoxShowStates.Location = new System.Drawing.Point(264, 9);
+            this.checkBoxShowStates.Name = "checkBoxShowStates";
+            this.checkBoxShowStates.Size = new System.Drawing.Size(121, 17);
+            this.checkBoxShowStates.TabIndex = 9;
+            this.checkBoxShowStates.Text = "Show internal states";
+            this.toolTip1.SetToolTip(this.checkBoxShowStates, "Check to show progress state columns");
+            this.checkBoxShowStates.UseVisualStyleBackColor = true;
+            this.checkBoxShowStates.CheckedChanged += new System.EventHandler(this.checkBoxShowStates_CheckedChanged);
+            // 
+            // checkBoxFit
+            // 
+            this.checkBoxFit.AutoSize = true;
+            this.checkBoxFit.Location = new System.Drawing.Point(126, 9);
+            this.checkBoxFit.Name = "checkBoxFit";
+            this.checkBoxFit.Size = new System.Drawing.Size(131, 17);
+            this.checkBoxFit.TabIndex = 8;
+            this.checkBoxFit.Text = "Fit Columns to window";
+            this.toolTip1.SetToolTip(this.checkBoxFit, "Check to resize colums to fit the window");
+            this.checkBoxFit.UseVisualStyleBackColor = true;
+            this.checkBoxFit.CheckedChanged += new System.EventHandler(this.checkBoxFit_CheckedChanged);
             // 
             // buttonHelp
             // 
@@ -110,6 +136,7 @@ namespace ACT_ChainTimers
             // 
             // buttonTest
             // 
+            this.buttonTest.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
             this.buttonTest.Location = new System.Drawing.Point(506, 5);
             this.buttonTest.Name = "buttonTest";
             this.buttonTest.Size = new System.Drawing.Size(75, 23);
@@ -139,7 +166,7 @@ namespace ACT_ChainTimers
             this.checkBoxImport.Size = new System.Drawing.Size(90, 17);
             this.checkBoxImport.TabIndex = 3;
             this.checkBoxImport.Text = "Parse Imports";
-            this.toolTip1.SetToolTip(this.checkBoxImport, "Check to have the plugin process imported files");
+            this.toolTip1.SetToolTip(this.checkBoxImport, "Check to ignore Combat End during imports");
             this.checkBoxImport.UseVisualStyleBackColor = true;
             this.checkBoxImport.CheckedChanged += new System.EventHandler(this.checkBoxImport_CheckedChanged);
             // 
@@ -170,24 +197,32 @@ namespace ACT_ChainTimers
             // 
             this.contextMenuStripZone.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.copyCurrentZoneToolStripMenuItem,
-            this.copyZoneFromMainTabToolStripMenuItem});
+            this.copyZoneFromMainTabToolStripMenuItem,
+            this.setFilterToThisZoneToolStripMenuItem});
             this.contextMenuStripZone.Name = "contextMenuStripZone";
-            this.contextMenuStripZone.Size = new System.Drawing.Size(212, 48);
+            this.contextMenuStripZone.Size = new System.Drawing.Size(225, 70);
             this.contextMenuStripZone.Opening += new System.ComponentModel.CancelEventHandler(this.contextMenuStripZone_Opening);
             // 
             // copyCurrentZoneToolStripMenuItem
             // 
             this.copyCurrentZoneToolStripMenuItem.Name = "copyCurrentZoneToolStripMenuItem";
-            this.copyCurrentZoneToolStripMenuItem.Size = new System.Drawing.Size(211, 22);
-            this.copyCurrentZoneToolStripMenuItem.Text = "Copy current zone";
+            this.copyCurrentZoneToolStripMenuItem.Size = new System.Drawing.Size(224, 22);
+            this.copyCurrentZoneToolStripMenuItem.Text = "Fill with current zone";
             this.copyCurrentZoneToolStripMenuItem.Click += new System.EventHandler(this.copyCurrentZoneToolStripMenuItem_Click);
             // 
             // copyZoneFromMainTabToolStripMenuItem
             // 
             this.copyZoneFromMainTabToolStripMenuItem.Name = "copyZoneFromMainTabToolStripMenuItem";
-            this.copyZoneFromMainTabToolStripMenuItem.Size = new System.Drawing.Size(211, 22);
-            this.copyZoneFromMainTabToolStripMenuItem.Text = "Copy Zone from Main tab";
+            this.copyZoneFromMainTabToolStripMenuItem.Size = new System.Drawing.Size(224, 22);
+            this.copyZoneFromMainTabToolStripMenuItem.Text = "Fill with Zone from Main tab";
             this.copyZoneFromMainTabToolStripMenuItem.Click += new System.EventHandler(this.copyZoneFromMainTabToolStripMenuItem_Click);
+            // 
+            // setFilterToThisZoneToolStripMenuItem
+            // 
+            this.setFilterToThisZoneToolStripMenuItem.Name = "setFilterToThisZoneToolStripMenuItem";
+            this.setFilterToThisZoneToolStripMenuItem.Size = new System.Drawing.Size(224, 22);
+            this.setFilterToThisZoneToolStripMenuItem.Text = "Set Filter to this zone";
+            this.setFilterToThisZoneToolStripMenuItem.Click += new System.EventHandler(this.setFilterToThisZoneToolStripMenuItem_Click);
             // 
             // contextMenuStripSpell
             // 
@@ -203,17 +238,6 @@ namespace ACT_ChainTimers
             this.copySpellFromMainTabToolStripMenuItem.Size = new System.Drawing.Size(209, 22);
             this.copySpellFromMainTabToolStripMenuItem.Text = "Copy Spell from Main tab";
             this.copySpellFromMainTabToolStripMenuItem.Click += new System.EventHandler(this.copySpellFromMainTabToolStripMenuItem_Click);
-            // 
-            // checkBoxFit
-            // 
-            this.checkBoxFit.AutoSize = true;
-            this.checkBoxFit.Location = new System.Drawing.Point(126, 9);
-            this.checkBoxFit.Name = "checkBoxFit";
-            this.checkBoxFit.Size = new System.Drawing.Size(131, 17);
-            this.checkBoxFit.TabIndex = 8;
-            this.checkBoxFit.Text = "Fit Columns to window";
-            this.checkBoxFit.UseVisualStyleBackColor = true;
-            this.checkBoxFit.CheckedChanged += new System.EventHandler(this.checkBoxFit_CheckedChanged);
             // 
             // ChainTimers
             // 
@@ -256,5 +280,7 @@ namespace ACT_ChainTimers
         private ToolStripMenuItem copyZoneFromMainTabToolStripMenuItem;
         private ToolStripMenuItem copySpellFromMainTabToolStripMenuItem;
         private CheckBox checkBoxFit;
+        private CheckBox checkBoxShowStates;
+        private ToolStripMenuItem setFilterToThisZoneToolStripMenuItem;
     }
 }
