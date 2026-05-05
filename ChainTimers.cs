@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
+using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -26,9 +27,9 @@ namespace ACT_ChainTimers
 {
     public partial class ChainTimers : UserControl, IActPluginV1
 	{
-        bool debugEnabled = true; // true for Debug.WriteLineIf printouts & test buttons
+        bool debugEnabled = false; // true for Debug.WriteLineIf printouts & test buttons
 
-        const string helpUlr = "https://github.com/jeffjl74/ACT_ChainTimers#chained-timers-plugin";
+        const string helpUrl = "https://github.com/jeffjl74/ACT_ChainTimers#chained-timers-plugin";
 
         Label lblStatus;        // The status label that appears in ACT's Plugin tab
         TabPage myTab;          // the plugin's tab
@@ -67,6 +68,10 @@ namespace ACT_ChainTimers
         bool importChecked; // make state accessible from non-UI thread
         // state change events
         ConcurrentQueue<EventDescription> eventDescriptions = new ConcurrentQueue<EventDescription>();
+
+        // sharing
+        static public string shareType = "Chain";
+        public string usersPrefix = "g ";
 
         // context menu
         int contextRow = -1;
@@ -187,7 +192,7 @@ namespace ACT_ChainTimers
             dataGridView1.Columns["First At"].ToolTipText = "(Optional - Requires Mob name)\nSeconds after the fight starts\nthat the first occurrance\nof the spell is expected";
             dataGridView1.Columns["Recast 1"].ToolTipText = "Spell recast time";
             dataGridView1.Columns["Recast 2"].ToolTipText = "(Optional) If the 2nd occurrance of the spell\nhas a different recast time";
-            dataGridView1.Columns["Warn At"].ToolTipText = "Timer seconds remaining when the alert is sounded.\nAlso begins watching for the next spell hit.";
+            dataGridView1.Columns["Warn At"].ToolTipText = "Timer seconds remaining when the alert is sounded.\nAlso when to start watching for the next spell hit.\nAlso how long to wait after missing a spell hit.";
             dataGridView1.Columns["Fill Miss"].ToolTipText = "If the spell is not seen when expected,\nassume it happened anyway";
             dataGridView1.Columns["Mob Hit"].ToolTipText = "Combat has started on the named mob";
             dataGridView1.Columns["2 Late"].ToolTipText = "2nd occurance of the spell\ndid not happen within the recast time";
@@ -218,6 +223,12 @@ namespace ACT_ChainTimers
                     tb.BackColor = Color.GhostWhite;
                     tb.TextChanged += Tb_TextChanged;
                     tb.ClickX += Tb_ClickX;
+                    // as long as we're looping, let's set the numeric alignment
+                    if (col.ValueType == typeof(int))
+                    {
+                        col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+                        tb.TextAlign = HorizontalAlignment.Center;
+                    }
                     SetFilterPlaceholder(tb);
 
                     filterPanel.Controls.Add(tb);
@@ -349,7 +360,7 @@ namespace ACT_ChainTimers
                         + @"\line If there is an update to ACT"
                         + @"\line you should click No and update ACT first."
                         + @"\line\line Release notes at project website:"
-                        + @"{\line\ql " + helpUlr + "}"
+                        + @"{\line\ql " + helpUrl + "}"
                         , "Notes New Version", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                     if (result == DialogResult.Yes)
                     {
@@ -372,7 +383,7 @@ namespace ACT_ChainTimers
 
         private void OFormActMain_XmlSnippetAdded(object sender, XmlSnippetEventArgs e)
         {
-            if (e.ShareType == "Chain")
+            if (e.ShareType == shareType)
             {
                 mUiContext.Post(UiParseXml, e);
             }
@@ -400,13 +411,13 @@ namespace ACT_ChainTimers
                     switch (field.Key)
                     {
                         case "S":
-                            row["Spell"] = field.Value;
+                            row["Spell"] = XmlCopyForm.DecodeXml_ish(field.Value);
                             break;
                         case "M":
-                            row["Mob"] = field.Value;
+                            row["Mob"] = XmlCopyForm.DecodeXml_ish(field.Value);
                             break;
                         case "Z":
-                            row["Zone"] = field.Value;
+                            row["Zone"] = XmlCopyForm.DecodeXml_ish(field.Value);
                             break;
                         case "F":
                             row["First At"] = Int32.Parse(field.Value);
@@ -424,7 +435,7 @@ namespace ACT_ChainTimers
                             row["Warn At"] = Int32.Parse(field.Value);
                             break;
                         case "A":
-                            row["Alert"] = field.Value;
+                            row["Alert"] = XmlCopyForm.DecodeXml_ish(field.Value);
                             break;
                     }
                 }
@@ -527,9 +538,8 @@ namespace ACT_ChainTimers
                 {
                     cb.Checked = true;
                     if (tb.Text != currentZone)
-                        tb.Text = currentZone; // text change will ApplyFilters()
-                    else
-                        ApplyFilters(); //re-apply since CombatEnd clears the zone filter
+                        tb.Text = currentZone;
+                    ApplyFilters(); //re-apply since CombatEnd clears the zone filter
                 }
             }
             catch { }
@@ -1242,9 +1252,9 @@ namespace ACT_ChainTimers
                 else
                     bindingSource.Filter = string.Empty;
             }
-            catch (Exception ex)
+            catch
             {
-                SimpleMessageBox.ShowDialog(ActGlobals.oFormActMain, "Invalid filter: " + ex.ToString(), "Filter Error");
+                SimpleMessageBox.ShowDialog(ActGlobals.oFormActMain, "Invalid filter: That filter syntax is not supported" , "Filter Error");
             }
             finally
             {
@@ -1291,64 +1301,79 @@ namespace ACT_ChainTimers
         private void buttonShare_Click(object sender, EventArgs e)
         {
             DataGridViewSelectedRowCollection rows = dataGridView1.SelectedRows;
-            if (rows.Count > 0)
+            if (rows.Count == 0)
             {
-                if (rows[0].DataBoundItem is DataRowView drv)
+                SimpleMessageBox.Show(ActGlobals.oFormActMain, "Select row(s) to share", "Missing selection");
+                return;
+            }
+
+            List<string> timers = new List<string>();
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (rows[i].DataBoundItem is DataRowView drv)
                 {
                     DataRow row = drv.Row;
 
                     StringBuilder sb = new StringBuilder();
-                    string spell = row["Spell"].ToString();
+                    string spell = XmlCopyForm.EncodeXml_ish(row["Spell"].ToString());
                     if (!string.IsNullOrWhiteSpace(spell))
                     {
-                        sb.Append($"<Chain S=\"{spell}\"");
-                        string mob = row["Mob"].ToString();
+                        sb.Append($"<Chain S='{spell}'");
+                        string mob = XmlCopyForm.EncodeXml_ish(row["Mob"].ToString());
                         if (!string.IsNullOrWhiteSpace(mob))
-                            sb.Append($" M=\"{mob}\"");
-                        string zone = row["Zone"].ToString();
+                            sb.Append($" M='{mob}'");
+                        string zone = XmlCopyForm.EncodeXml_ish(row["Zone"].ToString());
                         if (!string.IsNullOrWhiteSpace(zone))
-                            sb.Append($" Z=\"{zone}\"");
+                            sb.Append($" Z='{zone}'");
                         string first = row["First At"].ToString();
                         if (!string.IsNullOrWhiteSpace(first))
-                            sb.Append($" F=\"{first}\"");
+                            sb.Append($" F='{first}'");
                         string recast1 = row["Recast 1"].ToString();
                         if (!string.IsNullOrWhiteSpace(recast1))
-                            sb.Append($" R1=\"{recast1}\"");
+                            sb.Append($" R1='{recast1}'");
                         string recast2 = row["Recast 2"].ToString();
                         if (!string.IsNullOrWhiteSpace(recast2))
-                            sb.Append($" R2=\"{recast2}\"");
+                            sb.Append($" R2='{recast2}'");
                         string fill = string.IsNullOrWhiteSpace(row["Fill Miss"].ToString()) ? "F" : "T";
-                        sb.Append($" L=\"{fill}\"");
+                        sb.Append($" L='{fill}'");
                         string warn = row["Warn At"].ToString();
-                        sb.Append($" W=\"{warn}\"");
-                        string alert = row["Alert"].ToString();
-                        sb.Append($" A=\"{alert}\"");
+                        sb.Append($" W='{warn}'");
+                        string alert = XmlCopyForm.EncodeXml_ish(row["Alert"].ToString());
+                        sb.Append($" A='{alert}'");
 
                         sb.Append(" />");
-
-                        try
-                        {
-                            Clipboard.SetText(sb.ToString());
-                        }
-                        catch (Exception ce)
-                        {
-                            SimpleMessageBox.Show(ActGlobals.oFormActMain, ce.ToString(), "Clipboard Error");
-                        }
+                        timers.Add( sb.ToString() );
                     }
                     else
-                        SimpleMessageBox.Show(ActGlobals.oFormActMain, "Must specify a spell", "Spell Error");
+                        SimpleMessageBox.Show(ActGlobals.oFormActMain, $"Must specify a spell name for row {i}", "Spell Error");
                 }
-                else
-                    SimpleMessageBox.Show(ActGlobals.oFormActMain, "Select a row to share", "Missing selection");
+            }
+            if(timers.Count == 1)
+            {
+                try
+                {
+                    Clipboard.SetText(timers[0]);
+                }
+                catch (Exception ce)
+                {
+                    SimpleMessageBox.Show(ActGlobals.oFormActMain, ce.ToString(), "Clipboard Error");
+                }
             }
             else
-                SimpleMessageBox.Show(ActGlobals.oFormActMain, "Select a row to share", "Missing selection");
+            {
+                XmlCopyForm form = new XmlCopyForm(usersPrefix, timers);
+                form.FormClosing += (s, ev) => { usersPrefix = form._prefix; };
+                Point screenButton = buttonShare.PointToScreen(buttonShare.Location);
+                Point loc = new Point(screenButton.X, screenButton.Y - form.Size.Height);
+                form.Show();
+                form.Location = loc;
+            }
         }
 
         private void buttonTest_Click(object sender, EventArgs e)
         {
-            string p = "S=\"Constant Glare\" M=\"Oogiloi Eye\" Z=\"Zon Zobboz: The Outer Swarmyard [Raid]\" F=\"164\" R1=\"77\" R2=\"37\" L=\"T\" W=\"7\" A=\"fear in 5\" />";
-            var fieldPattern = @"(\w+)=""([^""]*)""";
+            string p = "S='Constant Glare Test' M='Oogiloi Eye' Z='Zon Zobboz!#58: The Outer Swarmyard [Raid]' F='164' R1='77' R2='37' L='T' W='7' A='fear in 5' />";
+            var fieldPattern = @"(\w+)='([^']*)'";
             var fieldMatches = Regex.Matches(p, fieldPattern);
             var xmlFields = new Dictionary<string, string>();
             foreach (Match match in fieldMatches)
@@ -1357,14 +1382,13 @@ namespace ACT_ChainTimers
                 string fieldValue = match.Groups[2].Value;
                 xmlFields[fieldName] = fieldValue;
             }
-            XmlSnippetEventArgs xe = new XmlSnippetEventArgs("Chain", xmlFields, p);
+            XmlSnippetEventArgs xe = new XmlSnippetEventArgs(shareType, xmlFields, p);
             UiParseXml(xe);
-
         }
 
         private void buttonHelp_Click(object sender, EventArgs e)
         {
-            Process.Start("https://github.com/jeffjl74/ACT_RoR_Parcels#Locked-Parcel-Plugin-for-Advanced-Combat-Tracker");
+            Process.Start(helpUrl);
         }
 
         private void checkBoxFit_CheckedChanged(object sender, EventArgs e)
@@ -1408,6 +1432,17 @@ namespace ACT_ChainTimers
                 }
             }
             AlignFilterBoxes();
+        }
+
+        private void buttonShare_MouseHover(object sender, EventArgs e)
+        {
+            DataGridViewSelectedRowCollection rows = dataGridView1.SelectedRows;
+            if(rows.Count > 1)
+                toolTip1.SetToolTip(buttonShare, "Open Macro dialog");
+            else if(rows.Count == 1)
+                toolTip1.SetToolTip(buttonShare, "Copy selected row to the clipboard");
+            else if (rows.Count == 0)
+                toolTip1.SetToolTip(buttonShare, "Must first select row(s) to share");
         }
 
         #endregion Buttons

@@ -64,7 +64,6 @@ namespace ACT_ChainTimers
             this.dataGridView1.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             this.dataGridView1.Dock = System.Windows.Forms.DockStyle.Fill;
             this.dataGridView1.Location = new System.Drawing.Point(0, 0);
-            this.dataGridView1.MultiSelect = false;
             this.dataGridView1.Name = "dataGridView1";
             this.dataGridView1.Size = new System.Drawing.Size(686, 325);
             this.dataGridView1.TabIndex = 1;
@@ -156,6 +155,7 @@ namespace ACT_ChainTimers
             this.toolTip1.SetToolTip(this.buttonShare, "Copy selected item to the clipboard");
             this.buttonShare.UseVisualStyleBackColor = true;
             this.buttonShare.Click += new System.EventHandler(this.buttonShare_Click);
+            this.buttonShare.MouseHover += new System.EventHandler(this.buttonShare_MouseHover);
             // 
             // checkBoxImport
             // 
