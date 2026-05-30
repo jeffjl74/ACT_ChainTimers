@@ -303,7 +303,7 @@ namespace ACT_ChainTimers
             {
                 // If ACT is set to automatically check for updates, check for updates to the plugin
                 // If we don't put this on a separate thread, web latency will delay the plugin init phase
-                //new Thread(new ThreadStart(oFormActMain_UpdateCheckClicked)).Start();
+                new Thread(new ThreadStart(oFormActMain_UpdateCheckClicked)).Start();
             }
 
             lblStatus.Text = "Plugin Started";
@@ -344,7 +344,7 @@ namespace ACT_ChainTimers
 
         void oFormActMain_UpdateCheckClicked()
         {
-            int pluginId = 109;
+            int pluginId = 1000;
 
             try
             {
