@@ -344,7 +344,7 @@ namespace ACT_ChainTimers
 
         void oFormActMain_UpdateCheckClicked()
         {
-            int pluginId = 1000;
+            int pluginId = 101;
 
             try
             {
