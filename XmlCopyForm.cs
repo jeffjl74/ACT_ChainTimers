@@ -10,20 +10,11 @@ namespace ACT_ChainTimers
 
     public partial class XmlCopyForm : Form
     {
-        const int maxChatLen = 240;
         bool _loading = true;
         bool _preIncremet = false;
         bool _autoIncrementing = false;
-        int _validTriggers = 0;
-        int _validTimers = 0;
-        int _totalTriggers = 0;
-        int _totalTimers = 0;
         public string _prefix;
         List<string> _timers;
-        List<TimerData> _categoryTimers;
-        List<CustomTrigger> _triggers;
-        //bool _enableOnZoneIn;
-        string _groupName;
         //public event EventHandler AltEncodeCheckChanged;
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
