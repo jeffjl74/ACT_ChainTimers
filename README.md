@@ -119,7 +119,7 @@ If a single row is selected when the `[Copy XML]` button is pressed, paste the s
 If multiple rows are selected when the `[Copy XML]` button is pressed, the dialog for sharing the timers via macro(s) opens. In the share dialog, pressing the `[Macro]` button copies the selected `do_file_commands` line for pasting in a game chat channel using `Ctrl-v` `Return`.
 
 ## Installation
-The easiest way to install the plugin is to use the [Get Plugins...] button in ACT. The button is located on the [Plugins]->[Plugin Listing] tab near the upper right corner. Select the `(100) Chained Timers` entry and press the [Download and Enable] button.
+The easiest way to install the plugin is to use the [Get Plugins...] button in ACT. The button is located on the [Plugins]->[Plugin Listing] tab near the upper right corner. Select the `(101) Chained Timers` entry and press the [Download and Enable] button.
 
 Otherwise, the plugin must be manually downloaded and installed. 
 * Download the `ChainTimers.dll` file from the Releases page. 
