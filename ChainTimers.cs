@@ -312,7 +312,6 @@ namespace ACT_ChainTimers
         public void DeInitPlugin()
 		{
 			// Unsubscribe from any events you listen to when exiting!
-			//ActGlobals.oFormActMain.OnLogLineRead -= OFormActMain_OnLogLineRead;
             ActGlobals.oFormActMain.XmlSnippetAdded -= OFormActMain_XmlSnippetAdded;
             ActGlobals.oFormActMain.AfterCombatAction -= OFormActMain_AfterCombatAction;
             ActGlobals.oFormActMain.OnCombatStart -= OFormActMain_OnCombatStart;
@@ -361,7 +360,7 @@ namespace ACT_ChainTimers
                         + @"\line you should click No and update ACT first."
                         + @"\line\line Release notes at project website:"
                         + @"{\line\ql " + helpUrl + "}"
-                        , "Notes New Version", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                        , "Chained Timers New Version", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                     if (result == DialogResult.Yes)
                     {
                         FileInfo updatedFile = ActGlobals.oFormActMain.PluginDownload(pluginId);
